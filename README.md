@@ -1,42 +1,12 @@
 # Tandaan 2.0
 
-Offline-first personal tasks, with Supabase sync when configured.
+Offline-first personal memory PWA built with React, TypeScript, Vite, Dexie, and Supabase.
 
-## Stack
-- React + TypeScript + Vite
-- vite-plugin-pwa
-- Dexie / IndexedDB for local-first storage
-- Supabase Auth + Postgres for cloud sync
-
-## Local setup
-
-1. Copy `.env.example` to `.env.local`.
-2. Add your Supabase project URL and publishable key.
-3. In Supabase, enable Anonymous Sign-Ins.
-4. Run `supabase/schema.sql` once in the Supabase SQL Editor.
-5. Install dependencies:
-
-```bash
-npm install
-```
-
-6. Start development:
-
-```bash
-npm run dev
-```
-
-7. Verify production build:
-
-```bash
-npm run build
-```
-
-## Environment variables
-
-```text
-VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-```
-
-Never put a Supabase secret/service-role key in the frontend.
+## v15 changes
+- Smart Add routes text into Task, Shopping, or Purchase.
+- Terse purchase shorthand such as `Rice 40`, `Egg 1 tray 400`, and `Egg 20 pieces` is treated as purchase data, not a task.
+- Purchase prices may be omitted; totals only include priced purchases.
+- Purchase CRUD with automatic PHP total.
+- Shopping CRUD.
+- Task due-date prompt appears before saving, not inside the task card.
+- Due date and optional time are edited together.

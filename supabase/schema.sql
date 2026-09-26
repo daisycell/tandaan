@@ -47,7 +47,7 @@ create table if not exists public.purchases (
   item_name text not null,
   quantity numeric(12,3) null,
   unit text null,
-  price numeric(12,2) not null check (price >= 0),
+  price numeric(12,2) null check (price is null or price >= 0),
   currency char(3) not null default 'PHP',
   purchased_at timestamptz not null default now(),
   notes text null,
@@ -125,3 +125,15 @@ drop policy if exists notes_update_own on public.notes;
 create policy notes_update_own on public.notes for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists notes_delete_own on public.notes;
 create policy notes_delete_own on public.notes for delete to authenticated using (auth.uid() = user_id);
+
+drop trigger if exists shopping_items_set_updated_at on public.shopping_items;
+create trigger shopping_items_set_updated_at before update on public.shopping_items for each row execute function public.set_updated_at();
+drop trigger if exists purchases_set_updated_at on public.purchases;
+create trigger purchases_set_updated_at before update on public.purchases for each row execute function public.set_updated_at();
+drop trigger if exists notes_set_updated_at on public.notes;
+create trigger notes_set_updated_at before update on public.notes for each row execute function public.set_updated_at();
+
+-- v15 allows terse purchase entries to be stored before a price is known.
+alter table public.purchases alter column price drop not null;
+alter table public.purchases drop constraint if exists purchases_price_nonnegative;
+alter table public.purchases add constraint purchases_price_nonnegative check (price is null or price >= 0);

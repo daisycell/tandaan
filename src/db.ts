@@ -1,33 +1,29 @@
 import Dexie, { type Table } from 'dexie'
-import type { Task } from './types'
+import type { Purchase, ShoppingItem, Task } from './types'
 
 type LocalSettings = { key: string; value: string }
 
 type OutboxItem = {
   id?: number
-  entity: 'task'
+  entity: 'task' | 'shopping' | 'purchase'
   operation: 'upsert' | 'delete'
   recordId: string
-  payload?: Task
+  payload?: Task | ShoppingItem | Purchase
   createdAt: string
 }
 
 class TandaanDB extends Dexie {
   tasks!: Table<Task, string>
+  shopping!: Table<ShoppingItem, string>
+  purchases!: Table<Purchase, string>
   settings!: Table<LocalSettings, string>
   outbox!: Table<OutboxItem, number>
 
   constructor() {
     super('tandaan')
-    this.version(1).stores({
-      tasks: 'id, updatedAt, dueDate, isCompleted',
-      settings: 'key'
-    })
-    this.version(2).stores({
-      tasks: 'id, updatedAt, dueDate, isCompleted',
-      settings: 'key',
-      outbox: '++id, entity, operation, recordId, createdAt'
-    })
+    this.version(1).stores({ tasks: 'id, updatedAt, dueDate, isCompleted', settings: 'key' })
+    this.version(2).stores({ tasks: 'id, updatedAt, dueDate, isCompleted', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
+    this.version(3).stores({ tasks: 'id, updatedAt, dueDate, isCompleted', shopping: 'id, updatedAt, isPurchased', purchases: 'id, updatedAt, purchasedAt', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
   }
 }
 
@@ -42,21 +38,14 @@ export async function setLocalName(name: string) {
   await db.settings.put({ key: 'displayName', value: name })
 }
 
-export async function queueTaskUpsert(task: Task) {
-  await db.outbox.put({
-    entity: 'task',
-    operation: 'upsert',
-    recordId: task.id,
-    payload: task,
-    createdAt: new Date().toISOString()
-  })
+export async function queueUpsert(entity: OutboxItem['entity'], payload: OutboxItem['payload']) {
+  if (!payload) return
+  await db.outbox.add({ entity, operation: 'upsert', recordId: payload.id, payload, createdAt: new Date().toISOString() })
 }
 
-export async function queueTaskDelete(id: string) {
-  await db.outbox.put({
-    entity: 'task',
-    operation: 'delete',
-    recordId: id,
-    createdAt: new Date().toISOString()
-  })
+export async function queueDelete(entity: OutboxItem['entity'], id: string) {
+  await db.outbox.add({ entity, operation: 'delete', recordId: id, createdAt: new Date().toISOString() })
 }
+
+export const queueTaskUpsert = (task: Task) => queueUpsert('task', task)
+export const queueTaskDelete = (id: string) => queueDelete('task', id)
