@@ -1,27 +1,42 @@
 # Tandaan 2.0
 
-Offline-first personal tasks, shopping, purchases and reminders.
+Offline-first personal tasks, with Supabase sync when configured.
 
 ## Stack
-
 - React + TypeScript + Vite
-- Vite PWA
-- Dexie / IndexedDB for local data
-- Supabase for Auth + PostgreSQL + future sync/reminders
-- Vercel for deployment
+- vite-plugin-pwa
+- Dexie / IndexedDB for local-first storage
+- Supabase Auth + Postgres for cloud sync
 
 ## Local setup
 
 1. Copy `.env.example` to `.env.local`.
 2. Add your Supabase project URL and publishable key.
-3. Run `npm install`.
-4. Run `npm run dev`.
+3. In Supabase, enable Anonymous Sign-Ins.
+4. Run `supabase/schema.sql` once in the Supabase SQL Editor.
+5. Install dependencies:
 
-## Supabase
+```bash
+npm install
+```
 
-Run `supabase/schema.sql` in the Supabase SQL Editor.
-Enable Anonymous Sign-Ins in Authentication providers.
+6. Start development:
 
-## Important
+```bash
+npm run dev
+```
 
-Never put a Supabase secret/service-role key in the frontend. Use only the publishable key in `VITE_SUPABASE_PUBLISHABLE_KEY`.
+7. Verify production build:
+
+```bash
+npm run build
+```
+
+## Environment variables
+
+```text
+VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+```
+
+Never put a Supabase secret/service-role key in the frontend.

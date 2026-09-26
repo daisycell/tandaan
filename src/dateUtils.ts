@@ -12,3 +12,8 @@ export function formatDue(date?: string | null, time?: string | null) {
   const timePart = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(d)
   return `${datePart} · ${timePart}`
 }
+
+export function todayISO() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}

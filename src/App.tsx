@@ -1,27 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CalendarPlus, Check, Circle, Clock3, Pencil, Plus, ShoppingCart, Sparkles, Trash2, X } from 'lucide-react'
-import { db, getLocalName, setLocalName } from './db'
-import { formatDue, greetingForHour } from './dateUtils'
+import { db, getLocalName, queueTaskDelete, queueTaskUpsert, setLocalName } from './db'
+import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { detectIntent, extractDueInfo } from './parser'
 import { supabase } from './supabase'
+import { getRemoteProfile, getUserId, syncProfile, syncTasks } from './sync'
 import type { Task } from './types'
 
 function newId() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-function toDbTask(task: Task, userId: string) {
-  return {
-    id: task.id,
-    user_id: userId,
-    title: task.title,
-    is_completed: task.isCompleted,
-    due_date: task.dueDate ?? null,
-    due_time: task.dueTime ?? null,
-    created_at: task.createdAt,
-    updated_at: task.updatedAt
-  }
-}
 
 export default function App() {
   const [name, setName] = useState('')
@@ -38,25 +27,57 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const saved = await getLocalName()
-      setName(saved)
-      if (supabase) {
-        const { data, error } = await supabase.auth.getSession()
-        if (!data.session) await supabase.auth.signInAnonymously()
-        if (error) setStatus('Local mode · cloud unavailable')
-      } else {
-        setStatus('Local mode · connect Supabase later')
+      try {
+        const local = await db.tasks.toArray()
+        setTasks(local)
+        const saved = await getLocalName()
+        setName(saved)
+
+        if (supabase) {
+          const userId = await getUserId()
+          if (userId) {
+            try {
+              const profile = await getRemoteProfile()
+              if (profile?.display_name) {
+                await setLocalName(profile.display_name)
+                setName(profile.display_name)
+              } else if (saved) {
+                await syncProfile(saved, Intl.DateTimeFormat().resolvedOptions().timeZone)
+              }
+              const synced = await syncTasks()
+              setTasks(synced)
+              setStatus('Synced · offline ready')
+            } catch {
+              setStatus('Offline · changes saved on this phone')
+            }
+          }
+        } else {
+          setStatus('Offline · local only')
+        }
+      } catch {
+        setStatus('Local storage unavailable')
+      } finally {
+        setProfileReady(true)
       }
-      setProfileReady(true)
     })()
   }, [])
 
   useEffect(() => {
-    db.tasks.toArray().then(setTasks)
+    const handleOnline = async () => {
+      try {
+        const synced = await syncTasks()
+        setTasks(synced)
+        setStatus('Synced · offline ready')
+      } catch {
+        setStatus('Online · sync retry pending')
+      }
+    }
+    window.addEventListener('online', handleOnline)
+    return () => window.removeEventListener('online', handleOnline)
   }, [])
 
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
-  const todayCount = tasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === new Date().toISOString().slice(0, 10))).length
+  const todayCount = tasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
 
   async function completeOnboarding() {
     const clean = draftName.trim()
@@ -66,12 +87,12 @@ export default function App() {
     if (supabase) {
       const { data } = await supabase.auth.getSession()
       if (data.session?.user) {
-        await supabase.from('profiles').upsert({
-          id: data.session.user.id,
-          display_name: clean,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          onboarding_complete: true
-        })
+        try {
+          await syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone)
+          setStatus('Profile saved · synced')
+        } catch {
+          setStatus('Profile saved locally · sync pending')
+        }
       }
     }
   }
@@ -88,15 +109,16 @@ export default function App() {
       updatedAt: now
     }
     await db.tasks.put(task)
+    await queueTaskUpsert(task)
     setTasks(prev => [task, ...prev])
-    setStatus('Saved locally')
+    setStatus('Saved locally · sync pending')
 
-    if (supabase) {
-      const { data } = await supabase.auth.getSession()
-      const userId = data.session?.user?.id
-      if (userId) {
-        const { error } = await supabase.from('tasks').insert(toDbTask(task, userId))
-        if (!error) setStatus('Saved · synced')
+    if (supabase && navigator.onLine) {
+      try {
+        await syncTasks()
+        setStatus('Saved · synced')
+      } catch {
+        setStatus('Saved locally · sync pending')
       }
     }
     return task
@@ -125,21 +147,21 @@ export default function App() {
   async function toggleTask(task: Task) {
     const updated = { ...task, isCompleted: !task.isCompleted, updatedAt: new Date().toISOString() }
     await db.tasks.put(updated)
+    await queueTaskUpsert(updated)
     setTasks(prev => prev.map(t => t.id === task.id ? updated : t))
-    if (supabase) {
-      const { data } = await supabase.auth.getSession()
-      const userId = data.session?.user?.id
-      if (userId) await supabase.from('tasks').update({ is_completed: updated.isCompleted, updated_at: updated.updatedAt }).eq('id', updated.id).eq('user_id', userId)
+    if (supabase && navigator.onLine) {
+      try { await syncTasks(); setStatus('Updated · synced') }
+      catch { setStatus('Updated locally · sync pending') }
     }
   }
 
   async function deleteTask(task: Task) {
     await db.tasks.delete(task.id)
+    await queueTaskDelete(task.id)
     setTasks(prev => prev.filter(t => t.id !== task.id))
-    if (supabase) {
-      const { data } = await supabase.auth.getSession()
-      const userId = data.session?.user?.id
-      if (userId) await supabase.from('tasks').delete().eq('id', task.id).eq('user_id', userId)
+    if (supabase && navigator.onLine) {
+      try { await syncTasks(); setStatus('Deleted · synced') }
+      catch { setStatus('Deleted locally · sync pending') }
     }
   }
 
@@ -157,12 +179,12 @@ export default function App() {
     if (!task) return
     const updated = { ...task, title: editTitle.trim() || task.title, dueDate: editDueDate || null, dueTime: editDueTime || null, updatedAt: new Date().toISOString() }
     await db.tasks.put(updated)
+    await queueTaskUpsert(updated)
     setTasks(prev => prev.map(t => t.id === updated.id ? updated : t))
     setEditingId(null)
-    if (supabase) {
-      const { data } = await supabase.auth.getSession()
-      const userId = data.session?.user?.id
-      if (userId) await supabase.from('tasks').update({ title: updated.title, due_date: updated.dueDate, due_time: updated.dueTime, updated_at: updated.updatedAt }).eq('id', updated.id).eq('user_id', userId)
+    if (supabase && navigator.onLine) {
+      try { await syncTasks(); setStatus('Updated · synced') }
+      catch { setStatus('Updated locally · sync pending') }
     }
   }
 
@@ -176,8 +198,13 @@ export default function App() {
     }
     const updated = { ...task, dueDate, dueTime: null, updatedAt: new Date().toISOString() }
     await db.tasks.put(updated)
+    await queueTaskUpsert(updated)
     setTasks(prev => prev.map(t => t.id === id ? updated : t))
     setDuePromptId(null)
+    if (supabase && navigator.onLine) {
+      try { await syncTasks(); setStatus('Due date saved · synced') }
+      catch { setStatus('Due date saved locally · sync pending') }
+    }
     if (mode === 'custom') startEdit(updated)
   }
 
