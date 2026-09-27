@@ -21,6 +21,39 @@ type ThemeCustomizations = {
   backgrounds: Record<ThemeId, string>
 }
 
+
+const THEME_STICKER_DECK_KEY = 'tandaan-theme-sticker-decks-v1'
+
+function nextThemeStickers(theme: ThemeId, count = 3) {
+  const pool = STICKERS[theme]
+  if (typeof window === 'undefined' || !pool.length) return pool.slice(0, count)
+
+  let decks: Record<string, string[]> = {}
+  try {
+    const raw = window.localStorage.getItem(THEME_STICKER_DECK_KEY)
+    if (raw) decks = JSON.parse(raw) as Record<string, string[]>
+  } catch {
+    decks = {}
+  }
+
+  let deck = Array.isArray(decks[theme]) ? decks[theme].filter(file => pool.includes(file)) : []
+  const missing = pool.filter(file => !deck.includes(file))
+  deck.push(...missing)
+  if (deck.length < count) deck = [...pool]
+
+  const picked = deck.slice(0, Math.min(count, pool.length))
+  const remainder = deck.slice(picked.length)
+  decks[theme] = [...remainder, ...picked]
+
+  try {
+    window.localStorage.setItem(THEME_STICKER_DECK_KEY, JSON.stringify(decks))
+  } catch {
+    // Sticker rotation remains best-effort if localStorage is unavailable.
+  }
+
+  return picked
+}
+
 const DEFAULT_THEME_CUSTOMIZATIONS: ThemeCustomizations = {
   stickers: {
     cat: STICKERS.cat.slice(),
@@ -90,6 +123,8 @@ export default function App() {
   const [draftTheme, setDraftTheme] = useState<ThemeId>(DEFAULT_THEME)
   const [themeCustomizations, setThemeCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
   const [draftCustomizations, setDraftCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
+  const [displayThemeStickers, setDisplayThemeStickers] = useState<string[]>(() => STICKERS[DEFAULT_THEME].slice(0, 3))
+  const [ambiguousInput, setAmbiguousInput] = useState<ParsedInput | null>(null)
 
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
@@ -236,8 +271,13 @@ export default function App() {
     document.documentElement.style.setProperty('--theme-wallpaper', background ? `url(\"${background}\")` : 'none')
   }, [theme, themeCustomizations])
 
+  useEffect(() => {
+    setDisplayThemeStickers(nextThemeStickers(theme, 3))
+    const id = window.setInterval(() => setDisplayThemeStickers(nextThemeStickers(theme, 3)), 8_000)
+    return () => window.clearInterval(id)
+  }, [theme])
+
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
-  const activeTheme = themeOption(theme)
   const todayCount = tasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
   const purchaseTotal = purchases.reduce((sum, purchase) => sum + (purchase.price ?? 0), 0)
   const pricedPurchaseCount = purchases.filter(p => p.price != null).length
@@ -275,24 +315,23 @@ export default function App() {
 
   async function saveSettings() {
     const clean = settingsName.trim() || name
-    setTheme(draftTheme)
-    await setLocalName(clean)
-    setName(clean)
-    await setLocalTheme(draftTheme)
     const normalized = normalizeThemeCustomizations(draftCustomizations)
-    await setLocalThemeCustomizations(normalized)
+    setTheme(draftTheme)
+    setLocalName(clean)
+    setName(clean)
+    setLocalTheme(draftTheme)
+    setLocalThemeCustomizations(normalized)
     setThemeCustomizations(normalized)
-    if (supabase) {
-      try {
-        await syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone, draftTheme)
-        setStatus('Settings saved · synced')
-      } catch {
-        setStatus('Settings saved locally · sync pending')
-      }
-    } else {
-      setStatus('Settings saved on this phone')
-    }
+
+    // Close immediately after local persistence so cloud sync can never hold the modal open.
     setSettingsOpen(false)
+    setStatus('Settings saved on this phone')
+
+    if (supabase && navigator.onLine) {
+      void syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone, draftTheme)
+        .then(() => setStatus('Settings saved · synced'))
+        .catch(() => setStatus('Settings saved locally · sync pending'))
+    }
   }
 
   function openSettings() {
@@ -342,8 +381,14 @@ export default function App() {
     void syncNow(message)
   }
 
-  async function saveParsed(parsed: ParsedInput) {
-    if (parsed.intent === 'task') {
+  async function saveParsed(parsed: ParsedInput, forcedIntent?: 'shopping' | 'purchase') {
+    if (parsed.ambiguous && !forcedIntent) {
+      setAmbiguousInput(parsed)
+      return false
+    }
+    const resolvedIntent = forcedIntent ?? parsed.intent
+
+    if (resolvedIntent === 'task') {
       const title = parsed.title || parsed.original
       if (parsed.dueDate) {
         void ensureReminders()
@@ -355,10 +400,10 @@ export default function App() {
         setDueTime('')
         setDueStage('choice')
       }
-      return
+      return true
     }
 
-    if (parsed.intent === 'shopping') {
+    if (resolvedIntent === 'shopping') {
       const items = parsed.shoppingItems?.length ? parsed.shoppingItems : parsed.shopping ? [parsed.shopping] : []
       for (const detail of items) {
         const item: ShoppingItem = { id: newId(), name: detail.itemName, quantity: detail.quantity ?? null, unit: detail.unit ?? null, expectedPrice: detail.price ?? null, isPurchased: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
@@ -367,10 +412,10 @@ export default function App() {
       }
       setShopping(await db.shopping.toArray())
       await syncNow('Shopping saved')
-      return
+      return true
     }
 
-    if (parsed.intent === 'purchase' && parsed.purchases?.length) {
+    if (resolvedIntent === 'purchase' && parsed.purchases?.length) {
       for (const entry of parsed.purchases) {
         const purchase: Purchase = { id: newId(), itemName: entry.itemName, quantity: entry.quantity ?? null, unit: entry.unit ?? null, price: entry.price ?? null, currency: 'PHP', purchasedAt: new Date().toISOString(), notes: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
         await db.purchases.put(purchase)
@@ -378,7 +423,10 @@ export default function App() {
       }
       setPurchases(await db.purchases.toArray())
       await syncNow('Purchases saved')
+      return true
     }
+
+    return true
   }
 
   async function addFromText() {
@@ -521,9 +569,9 @@ export default function App() {
         setVoiceState('transcribing')
         try {
           const result = await recorder.stop()
-          setStatus('Voice: preparing offline engine…')
+          setStatus('Getting voice ready on this device…')
           const transcript = await transcribeVoice(result.blob, result.durationMs, progress => {
-            setStatus(progress >= 100 ? 'Voice ready · transcribing on this device…' : `Voice engine: ${progress}%`)
+            setStatus(progress >= 100 ? 'Voice ready · transcribing on this device…' : `Getting voice ready… ${progress}%`)
           })
           setVoiceTranscript(transcript)
           setInput(transcript)
@@ -535,11 +583,6 @@ export default function App() {
           setVoiceLevel(0)
         }
       }
-      return
-    }
-
-    if (!navigator.onLine) {
-      setVoiceError('Voice transcription currently needs an internet connection. Tandaan can still save typed entries offline.')
       return
     }
 
@@ -555,8 +598,19 @@ export default function App() {
 
   async function saveVoiceReview() {
     if (!voiceReview) return
-    await saveParsed(voiceReview)
-    if (!duePrompt) setVoiceReview(null)
+    if (voiceReview.ambiguous) {
+      setAmbiguousInput(voiceReview)
+      setVoiceReview(null)
+      return
+    }
+    const saved = await saveParsed(voiceReview)
+    if (saved && !duePrompt) setVoiceReview(null)
+  }
+
+  async function chooseAmbiguousIntent(intent: 'shopping' | 'purchase') {
+    if (!ambiguousInput) return
+    await saveParsed(ambiguousInput, intent)
+    setAmbiguousInput(null)
   }
 
   if (!profileReady) return <div className="boot">Loading Tandaan…</div>
@@ -577,7 +631,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div>{themeCustomizations.stickers[theme][0] ? <img className="theme-sticker-avatar" src={stickerUrl(theme, themeCustomizations.stickers[theme][0])} alt="Selected theme sticker" /> : <div className="theme-animal-badge" aria-hidden="true">{activeTheme.emoji}</div>}</div>
+        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
         <div className="header-actions">
           <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => void ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
           <button className="icon-btn" onClick={openSettings} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
@@ -585,13 +639,12 @@ export default function App() {
       </header>
 
       <section className="hero">
-        {themeCustomizations.stickers[theme].slice(0, 3).map((file, index) => <img key={file} className={`theme-ambient-sticker sticker-${index + 1}`} src={stickerUrl(theme, file)} alt="" aria-hidden="true" />)}
         <h1>{greeting}, {name}</h1>
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
         <div className="summary-grid">
-          <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small></div>
-          <div className="summary-card card"><span>Shopping</span><strong>{shopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small></div>
-          <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small></div>
+          <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small>{displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Shopping</span><strong>{shopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small>{displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small>{displayThemeStickers[2] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}</div>
         </div>
       </section>
 
@@ -668,6 +721,22 @@ export default function App() {
           ))}
         </div>
       </section>
+
+      {ambiguousInput && (
+        <div className="modal-backdrop">
+          <div className="modal card ambiguity-modal">
+            <div className="modal-header"><div><strong>What did you mean?</strong><div className="modal-subtitle">{ambiguousInput.ambiguous?.reason}</div></div><button className="icon-btn" onClick={() => setAmbiguousInput(null)} aria-label="Close"><X /></button></div>
+            <div className="review-block">
+              <div className="review-label">Shortcut input</div>
+              <div className="ambiguity-text">{ambiguousInput.original}</div>
+              <div className="review-row ambiguity-preview"><span>Shopping interpretation</span><span>{(ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ')}</span></div>
+              <div className="review-row ambiguity-preview"><span>Purchase interpretation</span><span>{(ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ')}</span></div>
+            </div>
+            <div className="modal-actions ambiguity-actions"><button className="secondary" onClick={() => void chooseAmbiguousIntent('shopping')}>🛒 Shopping list</button><button className="primary" onClick={() => void chooseAmbiguousIntent('purchase')}>✓ Purchase</button></div>
+            <button className="text-btn" onClick={() => setAmbiguousInput(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {voiceReview && (
         <div className="modal-backdrop">

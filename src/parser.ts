@@ -6,6 +6,7 @@ const normalize = (text: string) => text
   .trim()
 
 export type Intent = 'task' | 'shopping' | 'purchase' | 'note'
+type BinaryIntent = 'shopping' | 'purchase'
 
 type ParsedLine = { itemName: string; quantity?: number | null; unit?: string | null; price?: number | null }
 
@@ -18,6 +19,7 @@ export type ParsedInput = {
   shopping?: ParsedLine
   shoppingItems?: ParsedLine[]
   purchases?: ParsedLine[]
+  ambiguous?: { options: BinaryIntent[]; reason: string }
 }
 
 const futureTask = /\b(i['’]?ll|i will|i['’]?m going to|i am going to|later|remind me|due|i need to|need to)\b/i
@@ -71,20 +73,21 @@ function wordsToNumber(text: string) {
 }
 
 function valueFrom(text: string) {
-  const direct = text.match(/^\s*(?:₱\s*)?(\d+(?:\.\d+)?)\s*$/)
+  const cleaned = normalize(text)
+    .replace(/\b(?:peso|pesos|php|piso|pisos)\b/g, '')
+    .replace(/₱/g, '')
+    .trim()
+  const direct = cleaned.match(/^\s*(\d+(?:\.\d+)?)\s*$/)
   if (direct) return Number(direct[1].replace(/,/g, ''))
-  return wordsToNumber(text)
+  return wordsToNumber(cleaned)
 }
 
 function canonicalUnit(unit: string) {
   const map: Record<string, string> = {
-    kg: 'kg', kilo: 'kg', kilos: 'kg',
-    g: 'g', gram: 'g', grams: 'g',
-    pcs: 'pcs', pc: 'pc', piece: 'pc', pieces: 'pcs',
-    tray: 'tray', trays: 'tray',
-    lata: 'can', can: 'can', cans: 'can',
-    bottle: 'bottle', bottles: 'bottle', pack: 'pack', packs: 'pack',
-    box: 'box', boxes: 'box', dozen: 'dozen', dozens: 'dozen',
+    kg: 'kg', kilo: 'kg', kilos: 'kg', g: 'g', gram: 'g', grams: 'g',
+    pcs: 'pcs', pc: 'pc', piece: 'pc', pieces: 'pcs', tray: 'tray', trays: 'tray',
+    lata: 'can', can: 'can', cans: 'can', bottle: 'bottle', bottles: 'bottle',
+    pack: 'pack', packs: 'pack', box: 'box', boxes: 'box', dozen: 'dozen', dozens: 'dozen',
     liter: 'L', liters: 'L', litre: 'L', litres: 'L', ml: 'mL', milliliter: 'mL', milliliters: 'mL'
   }
   return map[unit.toLowerCase()] ?? unit
@@ -94,45 +97,36 @@ function parseSegment(segment: string): ParsedLine | null {
   let s = segment.trim().replace(/^[-•]+\s*/, '').replace(/[.]+$/, '')
   if (!s) return null
 
-  // "egg 1 tray 400" / "egg one tray four hundred"
   let m = s.match(new RegExp(`^(.+?)\\s+([\\w .,-]+?)\\s+(${UNIT_RE})\\s+(?:for\\s+|at\\s+|₱\\s*)?([\\w ,.-]+)$`, 'i'))
   if (m) {
     const quantity = valueFrom(m[2])
     const price = valueFrom(m[4])
-    if (quantity != null && price != null) {
-      return { itemName: m[1].trim(), quantity, unit: canonicalUnit(m[3]), price }
-    }
+    if (quantity != null && price != null) return { itemName: m[1].trim(), quantity, unit: canonicalUnit(m[3]), price }
   }
 
-  // "egg 20 pieces" / "egg twenty pieces"
-  m = s.match(new RegExp(`^(.+?)\\s+([\\w .,-]+?)\\s+(${UNIT_RE})$`, 'i'))
+  m = s.match(new RegExp(`^(.+?)\\s+(\\d+(?:\\.\\d+)?|[\\w .,-]+?)\\s*(${UNIT_RE})$`, 'i'))
   if (m) {
     const quantity = valueFrom(m[2])
     if (quantity != null) return { itemName: m[1].trim(), quantity, unit: canonicalUnit(m[3]), price: null }
   }
 
-  // "egg 20" / "rice forty" — terse purchase shorthand treats the last number as price.
   m = s.match(/^(.+?)\s+(.+)$/i)
   if (m) {
     const price = valueFrom(m[2])
-    if (price != null && /(\d|zero|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo)/i.test(m[2])) {
-      return { itemName: m[1].trim(), quantity: null, unit: null, price }
-    }
+    if (price != null) return { itemName: m[1].trim(), quantity: null, unit: null, price }
   }
 
   return null
 }
 
-// Common household/grocery terms help us distinguish a compact shopping list
-// from terse purchase shorthand when users omit "buy" or "bought".
 const SHOPPING_ITEM_PHRASES = [
-  'dishwashing liquid', 'laundry detergent', 'fabric conditioner', 'cooking oil',
-  'kalamay delata', 'toothpaste', 'toothbrush', 'shampoo', 'conditioner',
-  'habon', 'sabon', 'soap', 'bugas', 'rice', 'itlog', 'egg', 'eggs',
-  'gatas', 'milk', 'tinapay', 'bread', 'sardinas', 'sardines', 'delata',
-  'noodles', 'pansit', 'asukal', 'sugar', 'kape', 'coffee', 'asin', 'salt',
-  'suka', 'vinegar', 'paminta', 'pepper', 'tissue', 'toilet paper',
-  'detergent', 'fabcon', 'toothbrush', 'water', 'tubig', 'snacks', 'biscuits'
+  'dishwashing liquid', 'laundry detergent', 'fabric conditioner', 'cooking oil', 'kalamay delata',
+  'toothpaste', 'toothbrush', 'shampoo', 'conditioner', 'habon', 'sabon', 'soap', 'bugas', 'rice',
+  'itlog', 'egg', 'eggs', 'gatas', 'milk', 'tinapay', 'bread', 'sardinas', 'sardines', 'delata',
+  'noodles', 'pansit', 'asukal', 'sugar', 'kape', 'coffee', 'asin', 'salt', 'suka', 'vinegar',
+  'paminta', 'pepper', 'tissue', 'toilet paper', 'detergent', 'fabcon', 'water', 'tubig', 'snacks',
+  'biscuits', 'chicken', 'manok', 'oil', 'isda', 'fish', 'baboy', 'pork', 'beef', 'onion', 'sibuyas',
+  'garlic', 'ahos', 'potato', 'patatas', 'tomato', 'kamatis'
 ]
 
 const shoppingPhrasePattern = new RegExp(`\\b(${SHOPPING_ITEM_PHRASES.map(escapeRegExp).sort((a, b) => b.length - a.length).join('|')})\\b`, 'gi')
@@ -149,9 +143,6 @@ function findShoppingItemStarts(text: string) {
     if (index >= 0 && phrase) rawMatches.push({ index, end: index + phrase.length, phrase })
   }
 
-  // Prefer the longest phrase when shorter known items overlap it, e.g.
-  // "kalamay delata" should stay one item rather than split into
-  // "kalamay" + "delata".
   const matches = rawMatches.sort((a, b) => a.index - b.index || b.end - a.end)
   const starts: { index: number; end: number; phrase: string }[] = []
   let lastEnd = -1
@@ -166,66 +157,57 @@ function findShoppingItemStarts(text: string) {
 function splitRecognizedItemSequence(text: string) {
   const starts = findShoppingItemStarts(text)
   if (starts.length < 2) return splitList(text)
-
   const normalized = normalize(text)
   return starts.map((start, i) => normalized.slice(start.index, starts[i + 1]?.index ?? normalized.length).trim()).filter(Boolean)
 }
 
 function parseShoppingListSegment(segment: string): ParsedLine | null {
-  let s = segment.trim().replace(/^[-•]+\s*/, '')
+  const s = segment.trim().replace(/^[-•]+\s*/, '')
 
-  // Explicit expected price: "shampoo 1 for 120" / "rice for 40 pesos".
   let m = s.match(/^(.+?)\s+(\d+(?:\.\d+)?|[a-z-]+(?:\s+[a-z-]+)*)\s+(.+?)\s+(?:for|at)\s+(?:₱\s*)?(\d+(?:\.\d+)?|[a-z-]+(?:\s+[a-z-]+)*)$/i)
   if (m) {
     const price = valueFrom(m[4])
-    const qtyPart = m[2]
+    const quantity = valueFrom(m[2])
     const unit = canonicalUnit(m[3])
-    const quantity = valueFrom(qtyPart)
-    if (price != null && quantity != null && new RegExp(UNIT_RE, 'i').test(unit)) {
-      return { itemName: m[1].trim(), quantity, unit, price }
-    }
+    if (price != null && quantity != null && new RegExp(`^${UNIT_RE}$`, 'i').test(unit)) return { itemName: m[1].trim(), quantity, unit, price }
   }
 
-  // Quantity + unit at the end: "shampoo 1 bottle".
-  m = s.match(new RegExp(`^(.+?)\\s+([\\w .,-]+?)\\s+(${UNIT_RE})$`, 'i'))
+  m = s.match(new RegExp(`^(.+?)\\s+(\\d+(?:\\.\\d+)?|[\\w .,-]+?)\\s*(${UNIT_RE})$`, 'i'))
   if (m) {
     const quantity = valueFrom(m[2])
     if (quantity != null) return { itemName: m[1].trim(), quantity, unit: canonicalUnit(m[3]), price: null }
   }
 
-  // Compact shopping lists often use a small bare number as quantity: "shampoo 1".
-  // Keep the tail to a single number word/number so multi-word item names such as
-  // "kalamay delata 3" are not accidentally reduced to just "kalamay".
   const bareQuantity = '(?:\\d+(?:\\.\\d+)?|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo)'
   m = s.match(new RegExp(`^(.+?)\\s+(${bareQuantity})$`, 'i'))
   if (m) {
     const quantity = valueFrom(m[2])
-    if (quantity != null && quantity >= 0 && quantity <= 20) {
-      return { itemName: m[1].trim(), quantity, unit: null, price: null }
-    }
+    if (quantity != null && quantity >= 0 && quantity <= 50) return { itemName: m[1].trim(), quantity, unit: null, price: null }
   }
 
   return { itemName: s }
 }
 
-function looksLikeShoppingList(text: string) {
+function isKnownShoppingItem(text: string) {
   const t = normalize(text)
-  if (purchaseVerb.test(t) || /(?:₱|\bphp\b|\bpesos?\b|\bfor\b|\bat\b)\s*\d/i.test(t)) return false
-  const starts = findShoppingItemStarts(text)
-  if (starts.length < 2) return false
+  return SHOPPING_ITEM_PHRASES.some(phrase => t === phrase)
+}
 
-  // A larger number is treated as price-like only when it is not immediately
-  // followed by a unit. This keeps quantities such as "24 bottles" as shopping.
-  const largeBareNumber = /\b\d{2,}(?:\.\d+)?\b(?!\s*(?:kg|kilo|kilos|g|grams?|pcs?|pieces?|tray|trays|lata|can|cans|bottle|bottles|pack|packs|box|boxes|dozen|dozens|liters?|litres?|ml)\b)/i
-  if (largeBareNumber.test(t)) return false
+function hasNumberLikeToken(text: string) {
+  return /\b\d+(?:\.\d+)?\b|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo)\b/i.test(text)
+}
 
-  const hasUnit = new RegExp(`\\b${UNIT_RE}\\b`, 'i').test(t)
-  const smallQuantityPattern = /\b(?:one|two|three|four|five|six|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo|\d{1,2})\b/i
+function hasExplicitMoneyCue(text: string) {
+  return /(?:₱|\bphp\b|\bpesos?\b|\bpisos?\b)/i.test(text)
+}
 
-  // Multiple known grocery items + no money marker + quantity-like numbers is
-  // strongly indicative of a shopping list. Example:
-  // "shampoo 1 habon 2 toothpaste kalamay delata 3".
-  return starts.length >= 2 && (smallQuantityPattern.test(t) || hasUnit)
+function buildCompactCandidates(raw: string) {
+  const parts = splitRecognizedItemSequence(raw)
+  const shoppingItems = parts.map(parseShoppingListSegment).filter(Boolean) as ParsedLine[]
+  const purchases = parts.map(parseSegment).filter(Boolean) as ParsedLine[]
+  const shoppingReady = shoppingItems.length === parts.length && shoppingItems.length > 0
+  const purchaseReady = purchases.length === parts.length && purchases.length > 0
+  return { parts, shoppingItems: shoppingReady ? shoppingItems : [], purchases: purchaseReady ? purchases : [] }
 }
 
 export function parseInput(text: string): ParsedInput {
@@ -237,7 +219,6 @@ export function parseInput(text: string): ParsedInput {
     return { intent: 'task', original: raw, title: due.cleanedTitle || raw, dueDate: due.dueDate ?? null, dueTime: due.dueTime ?? null }
   }
 
-  // Explicit shopping intent always wins over terse price shorthand.
   if (shoppingVerb.test(t)) {
     const withoutVerb = stripParticles(raw.replace(/^(?:i\s+need\s+to\s+|i\s+want\s+to\s+)?(?:buy|mabakal|bakal|palit|paliton|pangbakal|mupalit|palita|palitan)\b/i, '').trim())
     const parts = splitList(withoutVerb)
@@ -246,26 +227,40 @@ export function parseInput(text: string): ParsedInput {
     return { intent: 'shopping', original: raw, shopping: { itemName: withoutVerb || raw } }
   }
 
-  // Natural compact shopping lists such as:
-  // "shampoo 1 habon 2 toothpaste kalamay delata 3"
-  if (looksLikeShoppingList(raw)) {
-    const parts = splitRecognizedItemSequence(raw)
-    const items = parts.map(parseShoppingListSegment).filter(Boolean) as ParsedLine[]
-    if (items.length >= 2) return { intent: 'shopping', original: raw, shopping: items[0], shoppingItems: items }
-  }
-
   if (purchaseVerb.test(t)) {
     const withoutLead = stripParticles(raw.replace(/^(?:i\s+)?(?:bought|purchased|nabakal|nakapalit|nabili|napalit)\b\s*(?:ko\s+)?/i, ''))
-    const parts = splitRecognizedItemSequence(withoutLead)
-    const purchases = parts.map(parseSegment).filter(Boolean) as ParsedLine[]
+    const { purchases } = buildCompactCandidates(withoutLead)
     if (purchases.length) return { intent: 'purchase', original: raw, purchases }
   }
 
-  // Terse entries with numbers/units are purchases, even without "bought".
-  const shorthandParts = splitRecognizedItemSequence(raw)
-  const shorthandPurchases = shorthandParts.map(parseSegment).filter(Boolean) as ParsedLine[]
-  if (shorthandPurchases.length === shorthandParts.length && shorthandPurchases.length > 0 && shorthandPurchases.some(p => p.price != null || p.quantity != null)) {
-    return { intent: 'purchase', original: raw, purchases: shorthandPurchases }
+  const { parts, shoppingItems, purchases } = buildCompactCandidates(raw)
+  const explicitMoney = hasExplicitMoneyCue(raw)
+  const structuredPurchase = purchases.some(p => p.price != null && p.quantity != null && p.unit != null)
+
+  if (structuredPurchase || explicitMoney) {
+    if (purchases.length) return { intent: 'purchase', original: raw, purchases }
+  }
+
+  if (hasNumberLikeToken(raw) && shoppingItems.length && purchases.length) {
+    return {
+      intent: 'shopping',
+      original: raw,
+      shopping: shoppingItems[0],
+      shoppingItems,
+      purchases,
+      ambiguous: {
+        options: ['shopping', 'purchase'],
+        reason: 'This shortcut contains item names and numbers, but the numbers could be quantities or prices.'
+      }
+    }
+  }
+
+  if (shoppingItems.length && (shoppingItems.length >= 2 || isKnownShoppingItem(raw))) {
+    return { intent: 'shopping', original: raw, shopping: shoppingItems[0], shoppingItems }
+  }
+
+  if (parts.length && purchases.length && purchases.some(p => p.price != null || p.quantity != null)) {
+    return { intent: 'purchase', original: raw, purchases }
   }
 
   if (noteVerb.test(t)) return { intent: 'note', original: raw, title: raw }
@@ -279,10 +274,7 @@ export function detectIntent(text: string): Intent {
 }
 
 function splitList(text: string) {
-  return text
-    .split(/[,;\n]|\s+\band\s+|\s+\bkag\s+|\s+\b&&\s+/i)
-    .map(s => s.trim())
-    .filter(Boolean)
+  return text.split(/[,;\n]|\s+\band\s+|\s+\bkag\s+|\s+\b&&\s+/i).map(s => s.trim()).filter(Boolean)
 }
 
 function stripParticles(text: string) {
@@ -296,6 +288,8 @@ function stripParticles(text: string) {
 }
 
 function parseShoppingSegment(segment: string): ParsedLine | null {
+  const shoppingParsed = parseShoppingListSegment(segment)
+  if (shoppingParsed) return shoppingParsed
   const parsed = parseSegment(segment)
   if (parsed) return { itemName: parsed.itemName, quantity: parsed.quantity, unit: parsed.unit, price: parsed.price }
   return { itemName: segment.trim() }
