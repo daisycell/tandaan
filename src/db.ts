@@ -24,6 +24,7 @@ class TandaanDB extends Dexie {
     this.version(1).stores({ tasks: 'id, updatedAt, dueDate, isCompleted', settings: 'key' })
     this.version(2).stores({ tasks: 'id, updatedAt, dueDate, isCompleted', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
     this.version(3).stores({ tasks: 'id, updatedAt, dueDate, isCompleted', shopping: 'id, updatedAt, isPurchased', purchases: 'id, updatedAt, purchasedAt', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
+    this.version(4).stores({ tasks: 'id, updatedAt, dueDate, isCompleted, reminderAt', shopping: 'id, updatedAt, isPurchased', purchases: 'id, updatedAt, purchasedAt', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
   }
 }
 

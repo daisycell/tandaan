@@ -3,10 +3,10 @@ import { supabase } from './supabase'
 import type { Purchase, ShoppingItem, Task } from './types'
 
 function toDbTask(task: Task, userId: string) {
-  return { id: task.id, user_id: userId, title: task.title, is_completed: task.isCompleted, due_date: task.dueDate ?? null, due_time: task.dueTime ?? null, reminder_enabled: true, reminder_minutes_before: 1440, created_at: task.createdAt, updated_at: task.updatedAt }
+  return { id: task.id, user_id: userId, title: task.title, is_completed: task.isCompleted, due_date: task.dueDate ?? null, due_time: task.dueTime ?? null, reminder_enabled: task.reminderEnabled ?? true, reminder_minutes_before: task.reminderMinutesBefore ?? 1440, reminder_at: task.reminderAt ?? null, reminder_sent_at: task.reminderSentAt ?? null, created_at: task.createdAt, updated_at: task.updatedAt }
 }
 function fromDbTask(row: Record<string, unknown>): Task {
-  return { id: String(row.id), title: String(row.title), isCompleted: Boolean(row.is_completed), dueDate: row.due_date ? String(row.due_date) : null, dueTime: row.due_time ? String(row.due_time).slice(0, 5) : null, createdAt: String(row.created_at), updatedAt: String(row.updated_at) }
+  return { id: String(row.id), title: String(row.title), isCompleted: Boolean(row.is_completed), dueDate: row.due_date ? String(row.due_date) : null, dueTime: row.due_time ? String(row.due_time).slice(0, 5) : null, reminderEnabled: row.reminder_enabled !== false, reminderMinutesBefore: row.reminder_minutes_before == null ? 1440 : Number(row.reminder_minutes_before), reminderAt: row.reminder_at ? String(row.reminder_at) : null, reminderSentAt: row.reminder_sent_at ? String(row.reminder_sent_at) : null, createdAt: String(row.created_at), updatedAt: String(row.updated_at) }
 }
 function toDbShopping(item: ShoppingItem, userId: string) {
   return { id: item.id, user_id: userId, name: item.name, quantity: item.quantity ?? null, unit: item.unit ?? null, expected_price: item.expectedPrice ?? null, is_purchased: item.isPurchased, created_at: item.createdAt, updated_at: item.updatedAt }
@@ -136,7 +136,7 @@ export async function syncAll() {
   await flushOutbox(userId)
 
   const [taskRes, shoppingRes, purchaseRes] = await Promise.all([
-    supabase.from('tasks').select('id,title,is_completed,due_date,due_time,created_at,updated_at').eq('user_id', userId).is('deleted_at', null),
+    supabase.from('tasks').select('id,title,is_completed,due_date,due_time,reminder_enabled,reminder_minutes_before,reminder_at,reminder_sent_at,created_at,updated_at').eq('user_id', userId).is('deleted_at', null),
     supabase.from('shopping_items').select('id,name,quantity,unit,expected_price,is_purchased,created_at,updated_at').eq('user_id', userId).is('deleted_at', null),
     supabase.from('purchases').select('id,item_name,quantity,unit,price,currency,purchased_at,notes,created_at,updated_at').eq('user_id', userId).is('deleted_at', null)
   ])

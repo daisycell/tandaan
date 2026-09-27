@@ -4,6 +4,10 @@ export type Task = {
   isCompleted: boolean
   dueDate?: string | null
   dueTime?: string | null
+  reminderEnabled?: boolean
+  reminderMinutesBefore?: number
+  reminderAt?: string | null
+  reminderSentAt?: string | null
   createdAt: string
   updatedAt: string
 }

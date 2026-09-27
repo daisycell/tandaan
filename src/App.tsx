@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CalendarPlus, Check, Circle, Clock3, Pencil, Plus, ShoppingCart, Sparkles, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Mic, Pencil, Plus, ShoppingCart, Sparkles, Square, Trash2, X } from 'lucide-react'
 import { db, getLocalName, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
-import { parseInput } from './parser'
+import { parseInput, type ParsedInput } from './parser'
 import { supabase } from './supabase'
 import { getRemoteProfile, getUserId, syncAll, syncProfile } from './sync'
+import { calculateReminderAt } from './reminders'
+import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
+import { startVoiceCapture, transcribeVoice, type VoiceRecorder } from './voice'
 import type { Purchase, ShoppingItem, Task } from './types'
 
 function newId() {
@@ -31,6 +34,16 @@ function shortUnit(unit?: string | null) {
   return map[unit] ?? unit
 }
 
+function taskWithReminder(title: string, dueDate: string | null, dueTime: string | null): Task {
+  const now = new Date().toISOString()
+  return {
+    id: newId(), title, isCompleted: false, dueDate, dueTime,
+    reminderEnabled: Boolean(dueDate), reminderMinutesBefore: 1440,
+    reminderAt: calculateReminderAt(dueDate, dueTime, 1440), reminderSentAt: null,
+    createdAt: now, updatedAt: now
+  }
+}
+
 export default function App() {
   const [name, setName] = useState('')
   const [draftName, setDraftName] = useState('')
@@ -44,6 +57,7 @@ export default function App() {
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
   const [dueTime, setDueTime] = useState('')
+  const [dueHasTime, setDueHasTime] = useState(false)
 
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [editingShopping, setEditingShopping] = useState<ShoppingItem | null>(null)
@@ -52,6 +66,7 @@ export default function App() {
   const [editTitle, setEditTitle] = useState('')
   const [editDueDate, setEditDueDate] = useState('')
   const [editDueTime, setEditDueTime] = useState('')
+  const [editDueHasTime, setEditDueHasTime] = useState(false)
 
   const [editShoppingName, setEditShoppingName] = useState('')
   const [editShoppingQty, setEditShoppingQty] = useState('')
@@ -63,6 +78,16 @@ export default function App() {
   const [editPurchaseUnit, setEditPurchaseUnit] = useState('')
   const [editPurchasePrice, setEditPurchasePrice] = useState('')
 
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
+  const [voiceLevel, setVoiceLevel] = useState(0)
+  const [voiceSeconds, setVoiceSeconds] = useState(0)
+  const [voiceError, setVoiceError] = useState('')
+  const [voiceTranscript, setVoiceTranscript] = useState('')
+  const [voiceReview, setVoiceReview] = useState<ParsedInput | null>(null)
+  const recorderRef = useRef<VoiceRecorder | null>(null)
+
+  const [remindersEnabled, setRemindersEnabled] = useState(false)
+
   useEffect(() => {
     (async () => {
       try {
@@ -71,7 +96,6 @@ export default function App() {
         setPurchases(await db.purchases.toArray())
         const saved = await getLocalName()
         setName(saved)
-
         if (supabase) {
           const userId = await getUserId()
           if (userId) {
@@ -93,12 +117,17 @@ export default function App() {
             }
           }
         }
+        if (pushSupported()) {
+          const sub = await getPushSubscription()
+          setRemindersEnabled(Boolean(sub))
+        }
       } catch {
         setStatus('Local storage unavailable')
       } finally {
         setProfileReady(true)
       }
     })()
+    return () => recorderRef.current?.cancel()
   }, [])
 
   useEffect(() => {
@@ -116,6 +145,12 @@ export default function App() {
     window.addEventListener('online', handleOnline)
     return () => window.removeEventListener('online', handleOnline)
   }, [])
+
+  useEffect(() => {
+    if (voiceState !== 'recording') return
+    const id = window.setInterval(() => setVoiceSeconds(seconds => seconds + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [voiceState])
 
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
   const todayCount = tasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
@@ -153,6 +188,20 @@ export default function App() {
     }
   }
 
+  async function ensureReminders() {
+    if (!pushSupported() || !supabase) return false
+    try {
+      await enablePushNotifications()
+      setRemindersEnabled(true)
+      setStatus('Phone reminders enabled')
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not enable phone reminders.'
+      if (!message.includes('not configured yet')) setStatus(`Task saved · ${message}`)
+      return false
+    }
+  }
+
   async function persistTask(task: Task, message = 'Saved') {
     await db.tasks.put(task)
     await queueTaskUpsert(task)
@@ -174,29 +223,31 @@ export default function App() {
     await syncNow(message)
   }
 
-  async function addFromText() {
-    const raw = input.trim()
-    if (!raw) return
-    const parsed = parseInput(raw)
-
+  async function saveParsed(parsed: ParsedInput) {
     if (parsed.intent === 'task') {
-      const title = parsed.title || raw
+      const title = parsed.title || parsed.original
       if (parsed.dueDate) {
-        const task: Task = { id: newId(), title, isCompleted: false, dueDate: parsed.dueDate, dueTime: parsed.dueTime ?? null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-        await persistTask(task)
+        void ensureReminders()
+        const task = taskWithReminder(title, parsed.dueDate, parsed.dueTime ?? null)
+        await persistTask(task, 'Task saved')
       } else {
         setDuePrompt({ title })
         setDueDate('')
         setDueTime('')
+        setDueHasTime(false)
       }
-      setInput('')
       return
     }
 
-    if (parsed.intent === 'shopping' && parsed.shopping) {
-      const item: ShoppingItem = { id: newId(), name: parsed.shopping.name, quantity: parsed.shopping.quantity ?? null, unit: parsed.shopping.unit ?? null, expectedPrice: parsed.shopping.expectedPrice ?? null, isPurchased: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-      await persistShopping(item)
-      setInput('')
+    if (parsed.intent === 'shopping') {
+      const items = parsed.shoppingItems?.length ? parsed.shoppingItems : parsed.shopping ? [parsed.shopping] : []
+      for (const detail of items) {
+        const item: ShoppingItem = { id: newId(), name: detail.itemName, quantity: detail.quantity ?? null, unit: detail.unit ?? null, expectedPrice: detail.price ?? null, isPurchased: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+        await db.shopping.put(item)
+        await queueUpsert('shopping', item)
+      }
+      setShopping(await db.shopping.toArray())
+      await syncNow('Shopping saved')
       return
     }
 
@@ -206,16 +257,17 @@ export default function App() {
         await db.purchases.put(purchase)
         await queueUpsert('purchase', purchase)
       }
-      const localPurchases = await db.purchases.toArray()
-      setPurchases(localPurchases)
+      setPurchases(await db.purchases.toArray())
       await syncNow('Purchases saved')
-      setInput('')
-      return
     }
+  }
 
-    const fallback: Task = { id: newId(), title: raw, isCompleted: false, dueDate: null, dueTime: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-    setDuePrompt({ title: fallback.title })
+  async function addFromText() {
+    const raw = input.trim()
+    if (!raw) return
+    const parsed = parseInput(raw)
     setInput('')
+    await saveParsed(parsed)
   }
 
   async function saveDueChoice(mode: 'today' | 'tomorrow' | 'custom' | 'none') {
@@ -226,14 +278,15 @@ export default function App() {
     if (mode === 'tomorrow') nextDate = tomorrowISO()
     if (mode === 'custom') {
       nextDate = dueDate || null
-      nextTime = dueDate && dueTime ? dueTime : null
+      nextTime = dueDate && dueHasTime && dueTime ? dueTime : null
     }
-    const now = new Date().toISOString()
-    const task: Task = { id: newId(), title: duePrompt.title, isCompleted: false, dueDate: nextDate, dueTime: nextTime, createdAt: now, updatedAt: now }
+    if (nextDate) void ensureReminders()
+    const task = taskWithReminder(duePrompt.title, nextDate, nextTime)
     await persistTask(task, 'Task saved')
     setDuePrompt(null)
     setDueDate('')
     setDueTime('')
+    setDueHasTime(false)
   }
 
   function startEditTask(task: Task) {
@@ -241,11 +294,16 @@ export default function App() {
     setEditTitle(task.title)
     setEditDueDate(task.dueDate ?? '')
     setEditDueTime(task.dueTime ?? '')
+    setEditDueHasTime(Boolean(task.dueTime))
   }
 
   async function saveTaskEdit() {
     if (!editingTask) return
-    const updated: Task = { ...editingTask, title: editTitle.trim() || editingTask.title, dueDate: editDueDate || null, dueTime: editDueDate && editDueTime ? editDueTime : null, updatedAt: new Date().toISOString() }
+    const nextDate = editDueDate || null
+    const nextTime = nextDate && editDueHasTime && editDueTime ? editDueTime : null
+    const dateChanged = nextDate !== editingTask.dueDate || nextTime !== editingTask.dueTime
+    const updated: Task = { ...editingTask, title: editTitle.trim() || editingTask.title, dueDate: nextDate, dueTime: nextTime, reminderEnabled: Boolean(nextDate), reminderMinutesBefore: 1440, reminderAt: dateChanged ? calculateReminderAt(nextDate, nextTime, 1440) : (editingTask.reminderAt ?? calculateReminderAt(nextDate, nextTime, 1440)), reminderSentAt: dateChanged ? null : (editingTask.reminderSentAt ?? null), updatedAt: new Date().toISOString() }
+    if (nextDate) void ensureReminders()
     await persistTask(updated, 'Task updated')
     setEditingTask(null)
   }
@@ -309,6 +367,52 @@ export default function App() {
     setEditingPurchase(null)
   }
 
+  async function startVoice() {
+    setVoiceError('')
+    setVoiceTranscript('')
+    setVoiceSeconds(0)
+    if (voiceState === 'recording') {
+      if (recorderRef.current) {
+        const recorder = recorderRef.current
+        recorderRef.current = null
+        setVoiceState('transcribing')
+        try {
+          const result = await recorder.stop()
+          const transcript = await transcribeVoice(result.blob, result.durationMs)
+          setVoiceTranscript(transcript)
+          setInput(transcript)
+          setVoiceReview(parseInput(transcript))
+        } catch (error) {
+          setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.')
+        } finally {
+          setVoiceState('idle')
+          setVoiceLevel(0)
+        }
+      }
+      return
+    }
+
+    if (!navigator.onLine) {
+      setVoiceError('Voice transcription currently needs an internet connection. Tandaan can still save typed entries offline.')
+      return
+    }
+
+    try {
+      const recorder = await startVoiceCapture(level => setVoiceLevel(level))
+      recorderRef.current = recorder
+      setVoiceState('recording')
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : 'Could not access the microphone.')
+      setVoiceState('idle')
+    }
+  }
+
+  async function saveVoiceReview() {
+    if (!voiceReview) return
+    await saveParsed(voiceReview)
+    if (!duePrompt) setVoiceReview(null)
+  }
+
   if (!profileReady) return <div className="boot">Loading Tandaan…</div>
 
   if (!name) {
@@ -328,7 +432,7 @@ export default function App() {
     <main className="app-shell">
       <header className="app-header">
         <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
-        <button className="icon-btn" aria-label="Reminder status"><Clock3 size={19} /></button>
+        <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={19} /> : <Bell size={19} />}</button>
       </header>
 
       <section className="hero">
@@ -339,10 +443,16 @@ export default function App() {
       <section className="quick-add card">
         <div className="section-title"><div><strong>Quick Add</strong><span>Type naturally. Tandaan decides: task, shopping, or purchase.</span></div><div className="beta-pill">smart add</div></div>
         <div className="input-row">
-          <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addFromText() }} placeholder="Try: Pay electricity tomorrow at 6 PM" />
-          <button className="primary add-btn" onClick={addFromText}><Plus size={18} /> Add</button>
+          <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addFromText() }} placeholder="Try: Pay electricity tomorrow at 6 PM" />
+          <button className="primary add-btn" onClick={() => void addFromText()}><Plus size={18} /> Add</button>
         </div>
-        <div className="quick-hints">Examples: “Buy bread” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog”</div>
+        <button className={voiceState === 'recording' ? 'voice-btn recording' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing'}>
+          {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
+          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? 'Transcribing…' : 'Speak'}
+          {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
+        </button>
+        <div className="quick-hints">Voice transcription uses the secure server voice service when online. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM”</div>
+        {voiceError && <div className="inline-error">{voiceError}</div>}
       </section>
 
       <section className="section-block">
@@ -351,7 +461,7 @@ export default function App() {
           {tasks.length === 0 && <div className="empty card">No tasks yet. Add one above.</div>}
           {tasks.map(task => (
             <div className="task-card card" key={task.id}>
-              <button className="check-btn" onClick={() => toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
+              <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
               <div className="task-main">
                 <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
                 {task.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</div>}
@@ -359,7 +469,7 @@ export default function App() {
               <div className="task-actions">
                 {!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}
                 <button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button>
-                <button className="icon-btn danger" onClick={() => deleteTask(task)} title="Delete"><Trash2 size={17} /></button>
+                <button className="icon-btn danger" onClick={() => void deleteTask(task)} title="Delete"><Trash2 size={17} /></button>
               </div>
             </div>
           ))}
@@ -372,21 +482,12 @@ export default function App() {
           {shopping.length === 0 && <div className="empty card">No shopping items yet.</div>}
           {shopping.map(item => (
             <div className="task-card card" key={item.id}>
-              <button className="check-btn" onClick={() => toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
+              <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
               <div className="task-main">
                 <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
-                {(item.quantity != null || item.unit || item.expectedPrice != null) && (
-                  <div className="detail-line">
-                    {item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}
-                    {item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}
-                    {item.isPurchased && <span className="bought-pill">bought</span>}
-                  </div>
-                )}
+                {(item.quantity != null || item.unit || item.expectedPrice != null) && <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</div>}
               </div>
-              <div className="task-actions">
-                <button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button>
-                <button className="icon-btn danger" onClick={() => deleteShopping(item)} title="Delete shopping item"><Trash2 size={17} /></button>
-              </div>
+              <div className="task-actions"><button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button><button className="icon-btn danger" onClick={() => void deleteShopping(item)} title="Delete shopping item"><Trash2 size={17} /></button></div>
             </div>
           ))}
         </div>
@@ -394,90 +495,61 @@ export default function App() {
 
       <section className="section-block">
         <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
-        <div className="purchase-total card">
-          <div><span>Total purchases</span><strong>{money(purchaseTotal)}</strong></div>
-          <small>{purchases.length} item{purchases.length === 1 ? '' : 's'} recorded</small>
-        </div>
+        <div className="purchase-total card"><div><span>Total purchases</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} recorded</small></div>
         <div className="task-list">
           {purchases.length === 0 && <div className="empty card">No purchases yet. Try “Rice 40” or “Egg 1 tray 400”.</div>}
           {purchases.map(item => (
             <div className="task-card card" key={item.id}>
               <div className="purchase-dot">₱</div>
-              <div className="task-main">
-                <div className="task-title">{item.itemName}</div>
-                <div className="detail-line">
-                  {item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}
-                  {item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}
-                </div>
-              </div>
-              <div className="task-actions">
-                <button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button>
-                <button className="icon-btn danger" onClick={() => deletePurchase(item)} title="Delete purchase"><Trash2 size={17} /></button>
-              </div>
+              <div className="task-main"><div className="task-title">{item.itemName}</div><div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div></div>
+              <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button><button className="icon-btn danger" onClick={() => void deletePurchase(item)} title="Delete purchase"><Trash2 size={17} /></button></div>
             </div>
           ))}
         </div>
       </section>
 
+      {voiceReview && (
+        <div className="modal-backdrop">
+          <div className="modal card">
+            <div className="modal-header"><div><strong>I heard</strong><div className="modal-subtitle">{voiceTranscript}</div></div><button className="icon-btn" onClick={() => setVoiceReview(null)}><X /></button></div>
+            {voiceReview.intent === 'task' && <div className="review-block"><div className="review-label">Task</div><strong>{voiceReview.title || voiceReview.original}</strong>{voiceReview.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(voiceReview.dueDate, voiceReview.dueTime)}</div>}</div>}
+            {voiceReview.intent === 'shopping' && <div className="review-block"><div className="review-label">Shopping</div>{(voiceReview.shoppingItems ?? [voiceReview.shopping]).filter(Boolean).map((item, idx) => <div className="review-row" key={idx}><span>{item?.itemName}</span>{item?.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item?.price != null && <span>{money(item.price)}</span>}</div>)}</div>}
+            {voiceReview.intent === 'purchase' && <div className="review-block"><div className="review-label">Purchase</div>{(voiceReview.purchases ?? []).map((item, idx) => <div className="review-row" key={idx}><span>{item.itemName}</span>{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null && <span>{money(item.price)}</span>}</div>)}<div className="review-total">Total recognized: {money((voiceReview.purchases ?? []).reduce((sum, item) => sum + (item.price ?? 0), 0))}</div></div>}
+            <div className="modal-actions"><button className="secondary" onClick={() => { setInput(voiceTranscript); setVoiceReview(null) }}>Edit text</button><button className="primary" onClick={() => void saveVoiceReview()}>Save</button></div>
+          </div>
+        </div>
+      )}
+
       {duePrompt && (
         <div className="modal-backdrop">
           <div className="modal card">
-            <div className="modal-header"><div><strong>Add task</strong><div className="modal-subtitle">{duePrompt.title}</div></div><button className="icon-btn" onClick={() => setDuePrompt(null)}><X /></button></div>
-            <div className="due-prompt-large"><strong>When is this due?</strong><span>You can skip the deadline completely.</span></div>
-            <div className="choice-grid">
-              <button className="choice-card" onClick={() => saveDueChoice('today')}>Today</button>
-              <button className="choice-card" onClick={() => saveDueChoice('tomorrow')}>Tomorrow</button>
-              <button className="choice-card wide" onClick={() => saveDueChoice('none')}>No due date</button>
-            </div>
+            <div className="modal-header"><div><strong>When is this due?</strong><div className="modal-subtitle">{duePrompt.title}</div></div><button className="icon-btn" onClick={() => setDuePrompt(null)}><X /></button></div>
+            <div className="choice-grid"><button className="choice-card" onClick={() => void saveDueChoice('today')}>Today</button><button className="choice-card" onClick={() => void saveDueChoice('tomorrow')}>Tomorrow</button><button className="choice-card wide" onClick={() => void saveDueChoice('none')}>No due date</button></div>
             <div className="custom-due card-inner">
-              <label>Choose date <span>(optional time)</span></label>
-              <div className="date-time-row">
-                <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
-                <input aria-label="Optional time" type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} />
-              </div>
-              <button className="primary full" disabled={!dueDate} onClick={() => saveDueChoice('custom')}><CalendarPlus size={17} /> Save with this date</button>
+              <label>Choose a date</label>
+              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+              <div className="optional-toggle"><button className={dueHasTime ? 'secondary' : 'secondary active'} onClick={() => { setDueHasTime(false); setDueTime('') }}>Date only</button><button className={dueHasTime ? 'secondary active' : 'secondary'} disabled={!dueDate} onClick={() => setDueHasTime(true)}>Add time</button></div>
+              {dueHasTime && <input aria-label="Optional time" type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} />}
+              <button className="primary full" disabled={!dueDate} onClick={() => void saveDueChoice('custom')}><CalendarPlus size={17} /> Save with this date</button>
             </div>
           </div>
         </div>
       )}
 
       {editingTask && (
-        <div className="modal-backdrop">
-          <div className="modal card">
-            <div className="modal-header"><strong>Edit task</strong><button className="icon-btn" onClick={() => setEditingTask(null)}><X /></button></div>
-            <label>Task</label><input value={editTitle} onChange={e => setEditTitle(e.target.value)} />
-            <div className="custom-due card-inner">
-              <label>Due date <span>(time optional)</span></label>
-              <div className="date-time-row"><input type="date" value={editDueDate} onChange={e => setEditDueDate(e.target.value)} /><input aria-label="Optional time" type="time" value={editDueTime} onChange={e => setEditDueTime(e.target.value)} disabled={!editDueDate} /></div>
-              {editDueDate && <button className="secondary full" onClick={() => { setEditDueDate(''); setEditDueTime('') }}>Remove due date</button>}
-            </div>
-            <div className="modal-actions"><button className="secondary" onClick={() => setEditingTask(null)}>Cancel</button><button className="primary" onClick={saveTaskEdit}>Save changes</button></div>
-          </div>
-        </div>
+        <div className="modal-backdrop"><div className="modal card"><div className="modal-header"><strong>Edit task</strong><button className="icon-btn" onClick={() => setEditingTask(null)}><X /></button></div>
+          <label>Task</label><input value={editTitle} onChange={e => setEditTitle(e.target.value)} />
+          <div className="custom-due card-inner"><label>Due date</label><input type="date" value={editDueDate} onChange={e => setEditDueDate(e.target.value)} /><div className="optional-toggle"><button className="secondary" onClick={() => { setEditDueHasTime(false); setEditDueTime('') }}>Date only</button><button className="secondary" disabled={!editDueDate} onClick={() => setEditDueHasTime(true)}>Add time</button></div>{editDueHasTime && <input aria-label="Optional time" type="time" value={editDueTime} onChange={e => setEditDueTime(e.target.value)} disabled={!editDueDate} />}{editDueDate && <button className="secondary full" onClick={() => { setEditDueDate(''); setEditDueTime(''); setEditDueHasTime(false) }}>Remove due date</button>}</div>
+          <div className="modal-actions"><button className="secondary" onClick={() => setEditingTask(null)}>Cancel</button><button className="primary" onClick={() => void saveTaskEdit()}>Save changes</button></div>
+        </div></div>
       )}
 
       {editingShopping && (
-        <div className="modal-backdrop">
-          <div className="modal card">
-            <div className="modal-header"><strong>Edit shopping item</strong><button className="icon-btn" onClick={() => setEditingShopping(null)}><X /></button></div>
-            <label>Item</label><input value={editShoppingName} onChange={e => setEditShoppingName(e.target.value)} />
-            <div className="two-col"><div><label>Quantity</label><input type="number" min="0" step="0.001" value={editShoppingQty} onChange={e => setEditShoppingQty(e.target.value)} /></div><div><label>Unit</label><input value={editShoppingUnit} onChange={e => setEditShoppingUnit(e.target.value)} placeholder="kg, tray, pcs" /></div></div>
-            <label>Expected price (optional)</label><input type="number" min="0" step="0.01" value={editShoppingPrice} onChange={e => setEditShoppingPrice(e.target.value)} />
-            <div className="modal-actions"><button className="secondary" onClick={() => setEditingShopping(null)}>Cancel</button><button className="primary" onClick={saveShoppingEdit}>Save changes</button></div>
-          </div>
-        </div>
+        <div className="modal-backdrop"><div className="modal card"><div className="modal-header"><strong>Edit shopping item</strong><button className="icon-btn" onClick={() => setEditingShopping(null)}><X /></button></div><label>Item</label><input value={editShoppingName} onChange={e => setEditShoppingName(e.target.value)} /><div className="two-col"><div><label>Quantity</label><input type="number" min="0" step="0.001" value={editShoppingQty} onChange={e => setEditShoppingQty(e.target.value)} /></div><div><label>Unit</label><input value={editShoppingUnit} onChange={e => setEditShoppingUnit(e.target.value)} placeholder="kg, tray, pcs" /></div></div><label>Expected price (optional)</label><input type="number" min="0" step="0.01" value={editShoppingPrice} onChange={e => setEditShoppingPrice(e.target.value)} /><div className="modal-actions"><button className="secondary" onClick={() => setEditingShopping(null)}>Cancel</button><button className="primary" onClick={() => void saveShoppingEdit()}>Save changes</button></div></div></div>
       )}
 
       {editingPurchase && (
-        <div className="modal-backdrop">
-          <div className="modal card">
-            <div className="modal-header"><strong>Edit purchase</strong><button className="icon-btn" onClick={() => setEditingPurchase(null)}><X /></button></div>
-            <label>Item</label><input value={editPurchaseName} onChange={e => setEditPurchaseName(e.target.value)} />
-            <div className="two-col"><div><label>Quantity</label><input type="number" min="0" step="0.001" value={editPurchaseQty} onChange={e => setEditPurchaseQty(e.target.value)} /></div><div><label>Unit</label><input value={editPurchaseUnit} onChange={e => setEditPurchaseUnit(e.target.value)} placeholder="kg, tray, pcs" /></div></div>
-            <label>Price (optional)</label><input type="number" min="0" step="0.01" value={editPurchasePrice} onChange={e => setEditPurchasePrice(e.target.value)} />
-            <div className="modal-actions"><button className="secondary" onClick={() => setEditingPurchase(null)}>Cancel</button><button className="primary" onClick={savePurchaseEdit}>Save changes</button></div>
-          </div>
-        </div>
+        <div className="modal-backdrop"><div className="modal card"><div className="modal-header"><strong>Edit purchase</strong><button className="icon-btn" onClick={() => setEditingPurchase(null)}><X /></button></div><label>Item</label><input value={editPurchaseName} onChange={e => setEditPurchaseName(e.target.value)} /><div className="two-col"><div><label>Quantity</label><input type="number" min="0" step="0.001" value={editPurchaseQty} onChange={e => setEditPurchaseQty(e.target.value)} /></div><div><label>Unit</label><input value={editPurchaseUnit} onChange={e => setEditPurchaseUnit(e.target.value)} placeholder="kg, tray, pcs" /></div></div><label>Price (optional)</label><input type="number" min="0" step="0.01" value={editPurchasePrice} onChange={e => setEditPurchasePrice(e.target.value)} /><div className="modal-actions"><button className="secondary" onClick={() => setEditingPurchase(null)}>Cancel</button><button className="primary" onClick={() => void savePurchaseEdit()}>Save changes</button></div></div></div>
       )}
     </main>
   )
