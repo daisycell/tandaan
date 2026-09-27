@@ -7,7 +7,7 @@ import { supabase } from './supabase'
 import { getRemoteProfile, getUserId, syncAll, syncProfile } from './sync'
 import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
-import { startVoiceCapture, transcribeVoice, type VoiceRecorder } from './voice'
+import { prepareVoice, startVoiceCapture, transcribeVoice, type VoiceRecorder } from './voice'
 import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
 import { DEFAULT_THEME, STICKERS, THEME_OPTIONS, isThemeId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
@@ -149,7 +149,7 @@ export default function App() {
   const [editPurchaseUnit, setEditPurchaseUnit] = useState('')
   const [editPurchasePrice, setEditPurchasePrice] = useState('')
 
-  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
+  const [voiceState, setVoiceState] = useState<'idle' | 'preparing' | 'recording' | 'transcribing'>('idle')
   const [voiceLevel, setVoiceLevel] = useState(0)
   const [voiceSeconds, setVoiceSeconds] = useState(0)
   const [voiceProgress, setVoiceProgress] = useState<number | null>(null)
@@ -565,14 +565,9 @@ export default function App() {
     setVoiceProgress(null)
     setStatus('Transcribing on this device…')
     try {
-      const transcript = await transcribeVoice(result.blob, result.durationMs, progress => {
-        if (progress >= 100) {
-          setVoiceProgress(null)
-          setStatus('Transcribing on this device…')
-        } else {
-          setVoiceProgress(progress)
-          setStatus(`Preparing voice on this device… ${progress}%`)
-        }
+      const transcript = await transcribeVoice(result.blob, result.durationMs, undefined, phase => {
+        if (phase === 'online-fallback') setStatus('Local voice had trouble · trying online backup…')
+        else setStatus('Transcribing on this device…')
       })
       setVoiceTranscript(transcript)
       setInput(transcript)
@@ -594,7 +589,7 @@ export default function App() {
     setVoiceTranscript('')
     setVoiceSeconds(0)
 
-    if (voiceState === 'transcribing') return
+    if (voiceState === 'preparing' || voiceState === 'transcribing') return
 
     if (voiceState === 'recording') {
       const recorder = recorderRef.current
@@ -608,7 +603,14 @@ export default function App() {
     }
 
     try {
-      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 15_000)
+      setVoiceState('preparing')
+      setStatus('Starting voice on this device…')
+      await prepareVoice(progress => {
+        setVoiceProgress(progress)
+        setStatus(`Downloading voice model… ${progress}%`)
+      })
+      setVoiceProgress(null)
+      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 12_000)
       recorderRef.current = recorder
       setVoiceState('recording')
       setStatus('Listening… pause when you finish')
@@ -684,12 +686,11 @@ export default function App() {
           <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addFromText() }} placeholder="Try: Pay electricity tomorrow at 6 PM" />
           <button className="primary add-btn" onClick={() => void addFromText()}><Plus size={18} /> Add</button>
         </div>
-        <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' ? 'voice-btn transcribing' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing'}>
+        <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' || voiceState === 'preparing' ? 'voice-btn transcribing' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing' || voiceState === 'preparing'}>
           {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? (voiceProgress != null ? `Loading voice · ${voiceProgress}%` : 'Transcribing locally…') : 'Speak'}
+          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'preparing' ? (voiceProgress != null ? `Downloading voice · ${voiceProgress}%` : 'Starting voice…') : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
-        <div className="quick-hints"><strong>Quick input</strong> · Type naturally or tap Speak. A short pause after you finish speaking stops the recording automatically. Keep a voice capture under 15 seconds for on-device stability. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM” · “shampoo 1 habon 2 toothpaste kalamay delata 3”</div>
         {voiceError && <div className="inline-error">{voiceError}</div>}
       </section>
 
@@ -737,7 +738,6 @@ export default function App() {
       <section className="section-block">
         <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
         <div className="purchase-total card"><div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small></div>
-        <div className="swipe-hint">Swipe an item left all the way to delete it.</div>
         <div className="task-list">
           {purchases.map(item => (
             <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
@@ -822,7 +822,7 @@ export default function App() {
               <div className="theme-grid">
                 {THEME_OPTIONS.map(option => (
                   <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
-                    {draftCustomizations.stickers[option.id][0] ? <img className="theme-choice-sticker" src={stickerUrl(option.id, draftCustomizations.stickers[option.id][0])} alt="" /> : <span className="theme-swatch" style={{ background: option.swatch }} aria-hidden="true" />}
+                    <span className="theme-swatch" style={{ background: option.swatch }} aria-hidden="true" />
                     <span><strong>{option.name}</strong><small>{option.description}</small></span>
                     {draftTheme === option.id && <CheckCircle2 size={17} />}
                   </button>

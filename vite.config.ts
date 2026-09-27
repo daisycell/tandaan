@@ -9,4 +9,7 @@ export default defineConfig({
   preview: {
     host: true,
   },
+  worker: {
+    format: 'es',
+  },
 })

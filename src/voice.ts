@@ -1,6 +1,21 @@
-let whisperEnginePromise: Promise<WhisperEngine> | null = null
 let activeTranscriptionPromise: Promise<string> | null = null
-let activeEngine: WhisperEngine | null = null
+let worker: Worker | null = null
+let requestId = 0
+
+type ModelId = 'tiny-q5_1' | 'base-q5_1'
+type VoiceWorkerMessage =
+  | { id: number; type: 'progress'; progress: number }
+  | { id: number; type: 'result'; result: { ready?: boolean; text?: string } }
+  | { id: number; type: 'error'; error: string }
+
+type PendingRequest = {
+  resolve: (value: VoiceWorkerMessage) => void
+  reject: (reason?: unknown) => void
+  timer?: number
+  onProgress?: (progress: number) => void
+}
+
+const pending = new Map<number, PendingRequest>()
 
 export type VoiceCaptureResult = { blob: Blob; durationMs: number }
 export type VoiceRecorder = {
@@ -8,13 +23,9 @@ export type VoiceRecorder = {
   cancel: () => void
   finished: Promise<VoiceCaptureResult>
 }
+export type VoicePhaseCallback = (phase: 'starting' | 'local' | 'online-fallback') => void
 
-type WhisperEngine = {
-  transcribe: (audioData: Float32Array) => Promise<string>
-  recover: () => Promise<void>
-}
-
-type ProgressCallback = (progress: number) => void
+type PreparedModel = ModelId
 
 function preferredMimeType() {
   const types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
@@ -27,7 +38,84 @@ function extensionForMime(mime: string) {
   return 'webm'
 }
 
-export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 12_000): Promise<VoiceRecorder> {
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+}
+
+function chooseModelId(): PreparedModel {
+  return isMobileDevice() ? 'tiny-q5_1' : 'base-q5_1'
+}
+
+function modelCacheKey(modelId = chooseModelId()) {
+  return `tandaan-voice-model-cached-${modelId}`
+}
+
+function createWorker() {
+  if (worker) return worker
+  worker = new Worker(new URL('./voiceWorker.ts', import.meta.url), { type: 'module' })
+
+  worker.onmessage = event => {
+    const message = event.data as VoiceWorkerMessage
+    const request = pending.get(message.id)
+    if (!request) return
+    if (message.type === 'progress') {
+      request.onProgress?.(message.progress)
+      return
+    }
+    if (request.timer) window.clearTimeout(request.timer)
+    pending.delete(message.id)
+    if (message.type === 'error') request.reject(new Error(message.error))
+    else request.resolve(message)
+  }
+
+  worker.onerror = event => {
+    const error = new Error(event.message || 'The local voice worker stopped unexpectedly.')
+    for (const [id, request] of pending) {
+      if (request.timer) window.clearTimeout(request.timer)
+      request.reject(error)
+      pending.delete(id)
+    }
+    worker?.terminate()
+    worker = null
+  }
+
+  return worker
+}
+
+function resetWorker() {
+  worker?.terminate()
+  worker = null
+  for (const [id, request] of pending) {
+    if (request.timer) window.clearTimeout(request.timer)
+    request.reject(new Error('The local voice engine was restarted.'))
+    pending.delete(id)
+  }
+}
+
+function requestWorker(type: 'prepare' | 'transcribe', modelId: ModelId, audioData?: Float32Array, onProgress?: (progress: number) => void, timeoutMs?: number) {
+  const id = ++requestId
+  const requestPromise = new Promise<VoiceWorkerMessage>((resolve, reject) => {
+    const request: PendingRequest = { resolve, reject, onProgress }
+    if (timeoutMs) {
+      request.timer = window.setTimeout(() => {
+        pending.delete(id)
+        resetWorker()
+        reject(new Error('Local voice transcription timed out.'))
+      }, timeoutMs)
+    }
+    pending.set(id, request)
+    try {
+      createWorker().postMessage({ id, type, modelId, audioData }, audioData ? [audioData.buffer] : [])
+    } catch (error) {
+      pending.delete(id)
+      if (request.timer) window.clearTimeout(request.timer)
+      reject(error)
+    }
+  })
+  return requestPromise
+}
+
+export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 15_000): Promise<VoiceRecorder> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     throw new Error('Microphone recording is not supported by this browser.')
   }
@@ -135,74 +223,8 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
   return { stop, cancel, finished }
 }
 
-function isMobileDevice() {
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-}
-
-function chooseModelId() {
-  // Mobile uses the smaller quantized multilingual model to avoid iOS/Safari memory
-  // pressure. Desktop can use the more accurate base model.
-  return (isMobileDevice() ? 'tiny-q5_1' : 'base-q5_1') as 'tiny-q5_1' | 'base-q5_1'
-}
-
-function modelCacheKey() {
-  return `tandaan-voice-model-cached-${chooseModelId()}`
-}
-
-async function createWhisperEngine(onProgress?: ProgressCallback): Promise<WhisperEngine> {
-  const { WhisperWasmService, ModelManager } = await import('@timur00kh/whisper.wasm')
-  const service = new WhisperWasmService({ logLevel: 0 })
-  const supported = await service.checkWasmSupport()
-  if (!supported) throw new Error('This browser does not support the WebAssembly features needed for offline voice.')
-
-  const manager = new ModelManager({ logLevel: 0 })
-  const model = await manager.loadModel(chooseModelId(), true, progress => onProgress?.(progress))
-  await service.initModel(model)
-
-  const threads = 1
-
-  const transcribeOnce = async (audioData: Float32Array) => {
-    const result = await service.transcribe(audioData, undefined, {
-      language: 'auto',
-      threads,
-      translate: false,
-    })
-    const text = result.segments
-      .map(segment => segment.text.trim())
-      .filter(Boolean)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (!text) throw new Error('No speech was recognized. Try speaking clearly for a little longer.')
-    return text
-  }
-
-  const recover = async () => {
-    await service.restartModel()
-  }
-
-  return { transcribe: transcribeOnce, recover }
-}
-
-async function loadWhisperEngine(onProgress?: ProgressCallback): Promise<WhisperEngine> {
-  if (whisperEnginePromise) return whisperEnginePromise
-  whisperEnginePromise = createWhisperEngine(onProgress)
-    .then(engine => {
-      activeEngine = engine
-      try { localStorage.setItem(modelCacheKey(), '1') } catch { /* best effort */ }
-      return engine
-    })
-    .catch(error => {
-      whisperEnginePromise = null
-      activeEngine = null
-      throw error
-    })
-  return whisperEnginePromise
-}
-
 function trimSilence(audioData: Float32Array) {
   if (audioData.length < 16_000) return audioData
-
   const frameSize = 320
   const threshold = 0.008
   let first = 0
@@ -234,82 +256,100 @@ function trimSilence(audioData: Float32Array) {
     }
   }
 
-  const pad = Math.round(16_000 * 0.1)
+  const pad = Math.round(16_000 * 0.06)
   const from = Math.max(0, first - pad)
   const to = Math.min(audioData.length, last + pad)
-  if (to - from < 16_000) return audioData
-  // Avoid copying the full buffer on memory-constrained mobile devices.
-  return audioData.subarray(from, to)
+  if (to - from < 8_000) return audioData
+  return audioData.slice(from, to)
 }
 
-function isLikelyMemoryError(message: string) {
-  return /out of memory|memory|allocation|cannot allocate|wasm.*abort|aborted|assert/i.test(message)
+async function transcribeOnline(blob: Blob) {
+  const { supabase } = await import('./supabase')
+  if (!supabase) throw new Error('Supabase is not configured for online voice fallback.')
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
+  if (!token) throw new Error('No online Tandaan session is available for voice fallback.')
+
+  const response = await fetch('/api/transcribe', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': blob.type || 'application/octet-stream',
+      'X-Voice-Filename': `tandaan-voice.${extensionForMime(blob.type || 'audio/webm')}`,
+    },
+    body: blob,
+  })
+
+  const body = await response.json().catch(() => ({})) as { text?: string; error?: string }
+  if (!response.ok) throw new Error(body.error || `Online transcription failed (${response.status}).`)
+  if (!body.text?.trim()) throw new Error('The online transcription returned no speech.')
+  return body.text.trim()
 }
 
-export async function transcribeVoice(blob: Blob, durationMs: number, onProgress?: ProgressCallback) {
+export async function prepareVoice(onProgress?: ProgressCallback) {
+  const modelId = chooseModelId()
+  const cachedKey = modelCacheKey(modelId)
+  let cached = false
+  try { cached = localStorage.getItem(cachedKey) === '1' } catch { /* best effort */ }
+
+  const message = await requestWorker('prepare', modelId, undefined, progress => {
+    if (!cached) onProgress?.(progress)
+  })
+
+  if (message.type !== 'result') throw new Error('Voice engine did not finish initializing.')
+  try { localStorage.setItem(cachedKey, '1') } catch { /* best effort */ }
+}
+
+type ProgressCallback = (progress: number) => void
+
+export async function transcribeVoice(blob: Blob, durationMs: number, onProgress?: ProgressCallback, onPhase?: VoicePhaseCallback) {
   if (durationMs < 450) throw new Error('The recording is too short.')
-  if (typeof window === 'undefined' || typeof AudioContext === 'undefined') {
-    throw new Error('Offline voice is not supported in this environment.')
-  }
+  if (typeof window === 'undefined' || typeof AudioContext === 'undefined') throw new Error('Offline voice is not supported in this environment.')
   if (!blob.size) throw new Error('The microphone recording was empty. Please try again.')
-  if (durationMs > 14_000) throw new Error('Recording is too long. Try a shorter voice command.')
-
-  const { convertFromFile } = await import('@timur00kh/whisper.wasm')
-  const mime = blob.type || 'audio/webm'
-  const ext = extensionForMime(mime)
-  const file = new File([blob], `tandaan-voice.${ext}`, { type: mime })
-
-  let audioData: Float32Array
-  try {
-    const conversion = await convertFromFile(file, { normalize: true })
-    audioData = trimSilence(conversion.audioData)
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : 'Audio conversion failed.'
-    throw new Error(`Could not prepare the recording for offline transcription: ${detail}`)
-  }
-
-  if (activeTranscriptionPromise) {
-    throw new Error('A previous voice transcription is still finishing. Please wait a moment and try again.')
-  }
-
-  const modelKey = modelCacheKey()
-  let cacheAlreadyReady = false
-  try { cacheAlreadyReady = localStorage.getItem(modelKey) === '1' } catch { /* best effort */ }
+  if (durationMs > 16_000) throw new Error('Recording is too long. Try a shorter voice command.')
+  if (activeTranscriptionPromise) throw new Error('A previous voice transcription is still finishing. Please wait a moment and try again.')
 
   activeTranscriptionPromise = (async () => {
+    const { convertFromFile } = await import('@timur00kh/whisper.wasm')
+    const mime = blob.type || 'audio/webm'
+    const ext = extensionForMime(mime)
+    const file = new File([blob], `tandaan-voice.${ext}`, { type: mime })
+
+    let audioData: Float32Array
     try {
-      // Only show download progress when this device has not loaded this model before.
-      const engine = await loadWhisperEngine(cacheAlreadyReady ? undefined : progress => onProgress?.(progress))
-      if (!cacheAlreadyReady) onProgress?.(100)
+      const conversion = await convertFromFile(file, { normalize: true })
+      audioData = trimSilence(conversion.audioData)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Audio conversion failed.'
+      throw new Error(`Could not prepare the recording for offline transcription: ${detail}`)
+    }
 
-      try {
-        return await engine.transcribe(audioData)
-      } catch (error) {
-        const firstMessage = error instanceof Error ? error.message : 'Local voice transcription failed.'
-
-        if (/already transcribing/i.test(firstMessage)) {
-          try {
-            await engine.recover()
-            return await engine.transcribe(audioData)
-          } catch {
-            throw new Error('The previous voice session did not close cleanly. Please wait a second, then try again.')
-          }
+    const modelId = chooseModelId()
+    try {
+      onPhase?.('local')
+      const result = await requestWorker('transcribe', modelId, audioData, undefined, 20_000)
+      if (result.type !== 'result' || !result.result.text) throw new Error('The local voice engine returned no transcript.')
+      return result.result.text
+    } catch (localError) {
+      resetWorker()
+      if (navigator.onLine) {
+        onPhase?.('online-fallback')
+        try {
+          return await transcribeOnline(blob)
+        } catch (onlineError) {
+          const localMessage = localError instanceof Error ? localError.message : 'Local transcription failed.'
+          const onlineMessage = onlineError instanceof Error ? onlineError.message : 'Online transcription failed.'
+          throw new Error(`${localMessage} Online backup also failed: ${onlineMessage}`)
         }
-
-        if (isLikelyMemoryError(firstMessage)) {
-          whisperEnginePromise = null
-          activeEngine = null
-          throw new Error('Voice ran out of memory on this phone. The mobile voice engine has been reset. Try a short 3–6 second command.')
-        }
-
-        throw new Error(`Local voice transcription failed: ${firstMessage}`)
       }
+      const detail = localError instanceof Error ? localError.message : 'Local voice transcription failed.'
+      throw new Error(`${detail} Voice remains available offline, but this recording could not be processed.`)
     } finally {
       audioData = new Float32Array(0)
-      activeTranscriptionPromise = null
-      onProgress?.(100)
     }
-  })()
+  })().finally(() => {
+    activeTranscriptionPromise = null
+  })
 
   return activeTranscriptionPromise
 }

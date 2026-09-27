@@ -362,3 +362,26 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .theme-choice { grid-template-columns: 52px minmax(0,1fr); min-height: 92px; }
   .theme-choice-sticker { width: 48px; height: 48px; }
 }
+
+/* v38: mobile polish */
+.header-actions .icon-btn { display:grid; place-items:center; align-items:center; justify-items:center; padding:0; line-height:0; min-width:42px; }
+.header-actions .icon-btn svg { display:block; margin:0; }
+.summary-card-sticker { width:18px; height:18px; right:7px; top:7px; }
+.summary-card span, .summary-card small { padding-right:24px; }
+.theme-choice { grid-template-columns: 64px minmax(0,1fr); align-items:center; }
+.theme-choice .theme-swatch { width:54px; height:54px; }
+@media (max-width:620px) {
+  .app-shell { padding-left:14px; padding-right:14px; }
+  .app-header { min-height:56px; }
+  .header-actions { gap:6px; }
+  .header-actions .icon-btn { width:42px; height:42px; }
+  .summary-grid { gap:8px; }
+  .summary-card { min-height:102px; padding:13px; }
+  .summary-card span { font-size:11px; }
+  .summary-card strong { font-size:20px; }
+  .summary-card small { font-size:10px; }
+  .summary-card-sticker { width:17px; height:17px; right:6px; top:6px; }
+  .theme-choice { grid-template-columns:56px minmax(0,1fr); min-height:84px; }
+  .theme-choice .theme-swatch { width:46px; height:46px; }
+  .settings-modal { width:calc(100% - 16px); max-width:none; }
+}
