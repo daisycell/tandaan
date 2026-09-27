@@ -39,6 +39,15 @@ export async function setLocalName(name: string) {
   await db.settings.put({ key: 'displayName', value: name })
 }
 
+export async function getLocalTheme() {
+  const row = await db.settings.get('theme')
+  return row?.value ?? ''
+}
+
+export async function setLocalTheme(theme: string) {
+  await db.settings.put({ key: 'theme', value: theme })
+}
+
 export async function queueUpsert(entity: OutboxItem['entity'], payload: OutboxItem['payload']) {
   if (!payload) return
   await db.outbox.add({ entity, operation: 'upsert', recordId: payload.id, payload, createdAt: new Date().toISOString() })

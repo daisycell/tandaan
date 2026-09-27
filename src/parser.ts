@@ -214,14 +214,18 @@ function looksLikeShoppingList(text: string) {
   const starts = findShoppingItemStarts(text)
   if (starts.length < 2) return false
 
-  const numbers = Array.from(t.matchAll(/\b\d+(?:\.\d+)?\b/g), m => Number(m[0]))
-  if (numbers.some(n => n >= 20)) return false
+  // A larger number is treated as price-like only when it is not immediately
+  // followed by a unit. This keeps quantities such as "24 bottles" as shopping.
+  const largeBareNumber = /\b\d{2,}(?:\.\d+)?\b(?!\s*(?:kg|kilo|kilos|g|grams?|pcs?|pieces?|tray|trays|lata|can|cans|bottle|bottles|pack|packs|box|boxes|dozen|dozens|liters?|litres?|ml)\b)/i
+  if (largeBareNumber.test(t)) return false
 
   const hasUnit = new RegExp(`\\b${UNIT_RE}\\b`, 'i').test(t)
   const smallQuantityPattern = /\b(?:one|two|three|four|five|six|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo|\d{1,2})\b/i
-  // Multiple known item names + small quantities and no price marker is much more likely
-  // to be a shopping list than a purchase receipt shorthand.
-  return !hasUnit || smallQuantityPattern.test(t)
+
+  // Multiple known grocery items + no money marker + quantity-like numbers is
+  // strongly indicative of a shopping list. Example:
+  // "shampoo 1 habon 2 toothpaste kalamay delata 3".
+  return starts.length >= 2 && (smallQuantityPattern.test(t) || hasUnit)
 }
 
 export function parseInput(text: string): ParsedInput {

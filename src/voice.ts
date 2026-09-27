@@ -16,7 +16,7 @@ function preferredMimeType() {
   return types.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) || ''
 }
 
-export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 45_000): Promise<VoiceRecorder> {
+export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 30_000): Promise<VoiceRecorder> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     throw new Error('Microphone recording is not supported by this browser.')
   }
@@ -37,11 +37,17 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
   source.connect(analyser)
   const data = new Uint8Array(analyser.fftSize)
   const mimeType = preferredMimeType()
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType, bitsPerSecond: 32_000 } : undefined)
   const chunks: Blob[] = []
   const startedAt = performance.now()
   let animation = 0
   let finished = false
+  let speechStarted = false
+  let silenceStartedAt = 0
+  const silenceThreshold = 0.045
+  const silenceDurationMs = 1_600
+
+  let stop: () => Promise<VoiceCaptureResult>
 
   const updateLevel = () => {
     analyser.getByteTimeDomainData(data)
@@ -51,10 +57,18 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
       sum += v * v
     }
     const rms = Math.sqrt(sum / data.length)
-    onLevel?.(Math.min(1, rms * 3.5))
+    const level = Math.min(1, rms * 4)
+    onLevel?.(level)
+
+    if (rms > silenceThreshold) {
+      speechStarted = true
+      silenceStartedAt = 0
+    } else if (speechStarted) {
+      if (!silenceStartedAt) silenceStartedAt = performance.now()
+      else if (performance.now() - silenceStartedAt >= silenceDurationMs && !finished) void stop()
+    }
     animation = requestAnimationFrame(updateLevel)
   }
-  updateLevel()
 
   const cleanup = async () => {
     cancelAnimationFrame(animation)
@@ -65,23 +79,37 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
     onLevel?.(0)
   }
 
-  const stop = () => new Promise<VoiceCaptureResult>((resolve, reject) => {
+  stop = () => new Promise<VoiceCaptureResult>((resolve, reject) => {
     if (finished) return reject(new Error('Recording has already ended.'))
     finished = true
-    recorder.onstop = async () => {
+
+    recorder.onstop = () => {
       clearTimeout(timer)
-      await cleanup()
-      resolve({
-        blob: new Blob(chunks, { type: recorder.mimeType || blobTypeFallback() }),
-        durationMs: Math.round(performance.now() - startedAt)
-      })
+      cleanup()
+        .then(() => {
+          resolve({
+            blob: new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }),
+            durationMs: Math.round(performance.now() - startedAt)
+          })
+        })
+        .catch(() => {
+          resolve({
+            blob: new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }),
+            durationMs: Math.round(performance.now() - startedAt)
+          })
+        })
     }
-    recorder.onerror = async () => {
+
+    recorder.onerror = () => {
       clearTimeout(timer)
-      await cleanup()
-      reject(new Error('Recording failed.'))
+      cleanup().finally(() => reject(new Error('Recording failed.')))
     }
-    recorder.stop()
+
+    try {
+      recorder.stop()
+    } catch {
+      cleanup().finally(() => reject(new Error('Recording could not be stopped.')))
+    }
   })
 
   const cancel = () => {
@@ -96,14 +124,11 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
     if (event.data.size > 0) chunks.push(event.data)
   }
   recorder.start(250)
+  updateLevel()
 
   const timer = window.setTimeout(() => { void stop() }, maxDurationMs)
 
   return { stop, cancel }
-}
-
-function blobTypeFallback() {
-  return 'audio/webm'
 }
 
 export async function transcribeVoice(blob: Blob, durationMs: number) {
@@ -111,7 +136,6 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
   if (durationMs < 350) throw new Error('The recording is too short.')
 
   const mimeType = blob.type || 'audio/webm'
-
   if (!supabase) throw new Error('Tandaan voice is not configured.')
 
   let sessionResult = await supabase.auth.getSession()
@@ -128,11 +152,10 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
   }
   if (!token) throw new Error('Voice needs a Tandaan session. Please open Tandaan online once and try again.')
 
-  let response: Response
   const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), 35_000)
+  const timeoutId = window.setTimeout(() => controller.abort(), 45_000)
   try {
-    response = await fetch('/api/transcribe', {
+    const response = await fetch('/api/transcribe', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -142,24 +165,24 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
       body: blob,
       signal: controller.signal
     })
+
+    const contentType = response.headers.get('content-type') || ''
+    const payload = contentType.includes('application/json')
+      ? await response.json().catch(() => ({}))
+      : { error: (await response.text()).slice(0, 260) }
+
+    if (!response.ok) {
+      const detail = typeof payload?.error === 'string' && payload.error.trim() ? payload.error.trim() : `Voice service returned HTTP ${response.status}.`
+      throw new Error(detail)
+    }
+    if (!payload?.text) throw new Error('No speech was recognized. Try speaking a little closer to the phone.')
+    return String(payload.text).trim()
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Voice transcription timed out. Try a shorter recording.')
+      throw new Error('Voice transcription is taking too long. Try a shorter phrase, then try again.')
     }
-    throw new Error('Could not reach Tandaan voice service. Check your internet connection and try again.')
+    throw error
   } finally {
     window.clearTimeout(timeoutId)
   }
-
-  const contentType = response.headers.get('content-type') || ''
-  const payload = contentType.includes('application/json')
-    ? await response.json().catch(() => ({}))
-    : { error: (await response.text()).slice(0, 220) }
-
-  if (!response.ok) {
-    const detail = typeof payload?.error === 'string' && payload.error.trim() ? payload.error.trim() : `Voice service returned HTTP ${response.status}.`
-    throw new Error(detail)
-  }
-  if (!payload?.text) throw new Error('No speech was recognized. Try speaking a little closer to the phone.')
-  return String(payload.text).trim()
 }

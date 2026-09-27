@@ -7,7 +7,7 @@ Offline-first PWA for tasks, shopping, purchases, voice input, and reminders.
 - PWA via `a small hand-authored PWA service worker` with a custom service worker
 - Dexie / IndexedDB for local-first data
 - Supabase Auth + PostgreSQL + RLS
-- Vercel Node functions for speech transcription and reminder delivery
+- Vercel Edge/Server Functions for speech transcription and reminder delivery
 - Groq Whisper Large V3 Turbo for multilingual online transcription
 - Web Push for Home Screen notifications on supported iOS versions
 
@@ -65,4 +65,13 @@ The transcription endpoint now accepts raw audio bytes instead of relying on mul
 
 
 ## Voice latency
-The transcription API uses the official Groq TypeScript SDK with a 20-second upstream timeout and no automatic retries, while Vercel allows the function to run up to 120 seconds. This prevents repeated upstream retries from turning a failed transcription into a long 60-second platform timeout.
+Voice now uses a lightweight Vercel Edge endpoint with a direct multipart request to Groq, avoiding the heavier SDK path. Recordings also auto-stop after a short pause once speech has started, reducing upload time. The app still keeps a 45-second client guard so a stuck request fails cleanly.
+
+
+## v25 UX and voice notes
+- Full left swipe deletes automatically on release; there is no delete-button confirmation step.
+- Default theme is Royal Purple, with additional themes in My Profile & Settings.
+- Profile name remains cloud-synced; theme is stored locally as a device preference.
+- Voice recordings auto-stop after about 1.6 seconds of silence once speech has started, with a 30-second maximum recording length.
+- Voice transcription is still online in this release; there is no model preparation/download screen.
+- Compact multi-item inputs such as "shampoo 1 habon 2 toothpaste kalamay delata 3" are routed to Shopping when they contain multiple recognized household items and quantity-like values without a price marker.

@@ -36,9 +36,12 @@ export type Purchase = {
   updatedAt: string
 }
 
+export type ThemeId = 'purple' | 'midnight' | 'lavender' | 'rose' | 'ocean' | 'emerald'
+
 export type Profile = {
   id: string
   displayName: string
   timezone: string
   onboardingComplete: boolean
+  theme?: ThemeId
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Mic, Pencil, Plus, ShoppingCart, Sparkles, Square, Trash2, X } from 'lucide-react'
-import { db, getLocalName, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName } from './db'
+import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Mic, Pencil, Plus, Settings, ShoppingCart, Sparkles, Square, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
+import { db, getLocalName, getLocalTheme, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { parseInput, type ParsedInput } from './parser'
 import { supabase } from './supabase'
@@ -8,7 +8,8 @@ import { getRemoteProfile, getUserId, syncAll, syncProfile } from './sync'
 import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
 import { startVoiceCapture, transcribeVoice, type VoiceRecorder } from './voice'
-import type { Purchase, ShoppingItem, Task } from './types'
+import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
+import { DEFAULT_THEME, THEME_OPTIONS, isThemeId } from './theme'
 import SwipeToDelete from './SwipeToDelete'
 
 function newId() {
@@ -54,6 +55,10 @@ export default function App() {
   const [input, setInput] = useState('')
   const [status, setStatus] = useState('Offline-first ready')
   const [profileReady, setProfileReady] = useState(false)
+  const [theme, setTheme] = useState<ThemeId>(DEFAULT_THEME)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsName, setSettingsName] = useState('')
+  const [draftTheme, setDraftTheme] = useState<ThemeId>(DEFAULT_THEME)
 
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
@@ -96,7 +101,10 @@ export default function App() {
         setShopping(await db.shopping.toArray())
         setPurchases(await db.purchases.toArray())
         const saved = await getLocalName()
+        const savedTheme = await getLocalTheme()
         setName(saved)
+        setSettingsName(saved)
+        if (isThemeId(savedTheme)) setTheme(savedTheme)
         if (supabase) {
           const userId = await getUserId()
           if (userId) {
@@ -105,6 +113,7 @@ export default function App() {
               if (profile?.display_name) {
                 await setLocalName(profile.display_name)
                 setName(profile.display_name)
+                setSettingsName(profile.display_name)
               } else if (saved) {
                 await syncProfile(saved, Intl.DateTimeFormat().resolvedOptions().timeZone)
               }
@@ -153,6 +162,14 @@ export default function App() {
     return () => window.clearInterval(id)
   }, [voiceState])
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    const meta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null
+    const accent = THEME_OPTIONS.find(option => option.id === theme)?.swatch ?? '#8b5cf6'
+    if (meta) meta.content = accent
+    void setLocalTheme(theme)
+  }, [theme])
+
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
   const todayCount = tasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
   const purchaseTotal = purchases.reduce((sum, purchase) => sum + (purchase.price ?? 0), 0)
@@ -187,6 +204,31 @@ export default function App() {
         setStatus('Profile saved locally · sync pending')
       }
     }
+  }
+
+  async function saveSettings() {
+    const clean = settingsName.trim() || name
+    setTheme(draftTheme)
+    await setLocalName(clean)
+    setName(clean)
+    await setLocalTheme(draftTheme)
+    if (supabase) {
+      try {
+        await syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone)
+        setStatus('Settings saved · synced')
+      } catch {
+        setStatus('Settings saved locally · sync pending')
+      }
+    } else {
+      setStatus('Settings saved on this phone')
+    }
+    setSettingsOpen(false)
+  }
+
+  function openSettings() {
+    setSettingsName(name)
+    setDraftTheme(theme)
+    setSettingsOpen(true)
   }
 
   async function ensureReminders() {
@@ -428,7 +470,7 @@ export default function App() {
     }
 
     try {
-      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 45_000)
+      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 30_000)
       recorderRef.current = recorder
       setVoiceState('recording')
     } catch (error) {
@@ -462,12 +504,21 @@ export default function App() {
     <main className="app-shell">
       <header className="app-header">
         <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
-        <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={19} /> : <Bell size={19} />}</button>
+        <div className="header-actions">
+          <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => void ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
+          <button className="icon-btn" onClick={openSettings} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
+        </div>
       </header>
 
       <section className="hero">
+        <div className="hero-eyebrow"><UserRound size={15} /> My space</div>
         <h1>{greeting}, {name} 👋</h1>
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
+        <div className="summary-grid">
+          <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small></div>
+          <div className="summary-card card"><span>Shopping</span><strong>{shopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small></div>
+          <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small></div>
+        </div>
       </section>
 
       <section className="quick-add card">
@@ -478,10 +529,10 @@ export default function App() {
         </div>
         <button className={voiceState === 'recording' ? 'voice-btn recording' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing'}>
           {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? 'Transcribing…' : 'Speak'}
+          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? 'Working…' : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
-        <div className="quick-hints">Voice is best with short, natural phrases. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM” · “Shampoo 1 habon 2 toothpaste kalamay delata 3”</div>
+        <div className="quick-hints"><strong>Quick input</strong> · Type naturally or tap Speak. A short pause after you finish speaking stops the recording automatically. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM” · “shampoo 1 habon 2 toothpaste kalamay delata 3”</div>
         {voiceError && <div className="inline-error">{voiceError}</div>}
       </section>
 
@@ -490,7 +541,7 @@ export default function App() {
         <div className="task-list">
           {tasks.length === 0 && <div className="empty card">No tasks yet. Add one above.</div>}
           {tasks.map(task => (
-            <SwipeToDelete key={task.id} onDelete={() => void deleteTask(task)} label="Delete">
+            <SwipeToDelete key={task.id} onDelete={() => void deleteTask(task)}>
               <div className="task-card card">
                 <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
                 <div className="task-main">
@@ -512,7 +563,7 @@ export default function App() {
         <div className="task-list">
           {shopping.length === 0 && <div className="empty card">No shopping items yet.</div>}
           {shopping.map(item => (
-            <SwipeToDelete key={item.id} onDelete={() => void deleteShopping(item)} label="Delete">
+            <SwipeToDelete key={item.id} onDelete={() => void deleteShopping(item)}>
               <div className="task-card card">
                 <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
                 <div className="task-main">
@@ -528,11 +579,12 @@ export default function App() {
 
       <section className="section-block">
         <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
-        <div className="purchase-total card"><div><span>Total purchases</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} recorded</small></div>
+        <div className="purchase-total card"><div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small></div>
+        <div className="swipe-hint">Swipe an item left all the way to delete it.</div>
         <div className="task-list">
           {purchases.length === 0 && <div className="empty card">No purchases yet. Try “Rice 40” or “Egg 1 tray 400”.</div>}
           {purchases.map(item => (
-            <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)} label="Delete">
+            <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
               <div className="task-card card">
                 <div className="purchase-dot">₱</div>
                 <div className="task-main"><div className="task-title">{item.itemName}</div><div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div></div>
@@ -577,6 +629,42 @@ export default function App() {
                 <button className="text-btn" onClick={() => setDueStage('choice')}>Change date</button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+
+      {settingsOpen && (
+        <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setSettingsOpen(false) }}>
+          <div className="modal card settings-modal">
+            <div className="modal-header"><div><strong>My Profile & Settings</strong><div className="modal-subtitle">Personalize Tandaan on this device.</div></div><button className="icon-btn" onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X /></button></div>
+
+            <section className="settings-section">
+              <div className="settings-section-title"><UserRound size={17} /><div><strong>My profile</strong><span>Your name appears in your greeting.</span></div></div>
+              <label>Name</label>
+              <input value={settingsName} onChange={e => setSettingsName(e.target.value)} placeholder="Your name" />
+            </section>
+
+            <section className="settings-section">
+              <div className="settings-section-title"><Palette size={17} /><div><strong>Theme</strong><span>Choose how Tandaan looks.</span></div></div>
+              <div className="theme-grid">
+                {THEME_OPTIONS.map(option => (
+                  <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
+                    <span className="theme-swatch" style={{ background: option.swatch }} />
+                    <span><strong>{option.name}</strong><small>{option.description}</small></span>
+                    {draftTheme === option.id && <CheckCircle2 size={17} />}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <div className="settings-section-title"><SlidersHorizontal size={17} /><div><strong>App behavior</strong><span>Local-first now, cloud sync when online.</span></div></div>
+              <div className="settings-status-row"><span><WifiOff size={16} /> Offline-first data</span><strong>Ready</strong></div>
+              <div className="settings-status-row"><span><Bell size={16} /> Phone reminders</span><strong>{remindersEnabled ? 'Enabled' : 'Off'}</strong></div>
+            </section>
+
+            <div className="modal-actions"><button className="secondary" onClick={() => setSettingsOpen(false)}>Cancel</button><button className="primary" onClick={() => void saveSettings()}><Check size={17} /> Save settings</button></div>
           </div>
         </div>
       )}
