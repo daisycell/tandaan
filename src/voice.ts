@@ -130,13 +130,27 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
   }
   if (!token) throw new Error('Voice needs a Tandaan session. Please open Tandaan online once and try again.')
 
-  const response = await fetch('/api/transcribe', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: form
-  })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(typeof payload?.error === 'string' ? payload.error : 'Transcription failed.')
-  if (!payload?.text) throw new Error('No speech was recognized.')
+  let response: Response
+  try {
+    response = await fetch('/api/transcribe', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store',
+      body: form
+    })
+  } catch {
+    throw new Error('Could not reach Tandaan voice service. Check your internet connection and try again.')
+  }
+
+  const contentType = response.headers.get('content-type') || ''
+  const payload = contentType.includes('application/json')
+    ? await response.json().catch(() => ({}))
+    : { error: (await response.text()).slice(0, 220) }
+
+  if (!response.ok) {
+    const detail = typeof payload?.error === 'string' && payload.error.trim() ? payload.error.trim() : `Voice service returned HTTP ${response.status}.`
+    throw new Error(detail)
+  }
+  if (!payload?.text) throw new Error('No speech was recognized. Try speaking a little closer to the phone.')
   return String(payload.text).trim()
 }

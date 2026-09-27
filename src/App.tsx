@@ -206,21 +206,26 @@ export default function App() {
     await db.tasks.put(task)
     await queueTaskUpsert(task)
     setTasks(prev => prev.some(t => t.id === task.id) ? prev.map(t => t.id === task.id ? task : t) : [task, ...prev])
-    await syncNow(message)
+    // Local-first: the edit is saved immediately. Cloud sync happens in the background
+    // so a slow/failed network request can never block the Save button.
+    setStatus(`${message} · saved on this phone`)
+    void syncNow(message)
   }
 
   async function persistShopping(item: ShoppingItem, message = 'Shopping item saved') {
     await db.shopping.put(item)
     await queueUpsert('shopping', item)
     setShopping(prev => prev.some(i => i.id === item.id) ? prev.map(i => i.id === item.id ? item : i) : [item, ...prev])
-    await syncNow(message)
+    setStatus(`${message} · saved on this phone`)
+    void syncNow(message)
   }
 
   async function persistPurchase(item: Purchase, message = 'Purchase saved') {
     await db.purchases.put(item)
     await queueUpsert('purchase', item)
     setPurchases(prev => prev.some(i => i.id === item.id) ? prev.map(i => i.id === item.id ? item : i) : [item, ...prev])
-    await syncNow(message)
+    setStatus(`${message} · saved on this phone`)
+    void syncNow(message)
   }
 
   async function saveParsed(parsed: ParsedInput) {
@@ -311,13 +316,17 @@ export default function App() {
 
   async function saveTaskEdit() {
     if (!editingTask) return
-    const nextDate = editDueDate || null
-    const nextTime = nextDate && editDueTime ? editDueTime : null
-    const dateChanged = nextDate !== editingTask.dueDate || nextTime !== editingTask.dueTime
-    const updated: Task = { ...editingTask, title: editTitle.trim() || editingTask.title, dueDate: nextDate, dueTime: nextTime, reminderEnabled: Boolean(nextDate), reminderMinutesBefore: 1440, reminderAt: dateChanged ? calculateReminderAt(nextDate, nextTime, 1440) : (editingTask.reminderAt ?? calculateReminderAt(nextDate, nextTime, 1440)), reminderSentAt: dateChanged ? null : (editingTask.reminderSentAt ?? null), updatedAt: new Date().toISOString() }
-    if (nextDate) void ensureReminders()
-    await persistTask(updated, 'Task updated')
-    setEditingTask(null)
+    try {
+      const nextDate = editDueDate || null
+      const nextTime = nextDate && editDueTime ? editDueTime : null
+      const dateChanged = nextDate !== editingTask.dueDate || nextTime !== editingTask.dueTime
+      const updated: Task = { ...editingTask, title: editTitle.trim() || editingTask.title, dueDate: nextDate, dueTime: nextTime, reminderEnabled: Boolean(nextDate), reminderMinutesBefore: 1440, reminderAt: dateChanged ? calculateReminderAt(nextDate, nextTime, 1440) : (editingTask.reminderAt ?? calculateReminderAt(nextDate, nextTime, 1440)), reminderSentAt: dateChanged ? null : (editingTask.reminderSentAt ?? null), updatedAt: new Date().toISOString() }
+      if (nextDate) void ensureReminders()
+      await persistTask(updated, 'Task updated')
+      setEditingTask(null)
+    } catch (error) {
+      setStatus(error instanceof Error ? `Could not save task: ${error.message}` : 'Could not save task.')
+    }
   }
 
   async function toggleTask(task: Task) {
@@ -355,9 +364,13 @@ export default function App() {
 
   async function saveShoppingEdit() {
     if (!editingShopping) return
-    const updated: ShoppingItem = { ...editingShopping, name: editShoppingName.trim() || editingShopping.name, quantity: editShoppingQty ? Number(editShoppingQty) : null, unit: editShoppingUnit.trim() || null, expectedPrice: editShoppingPrice ? Number(editShoppingPrice) : null, updatedAt: new Date().toISOString() }
-    await persistShopping(updated, 'Shopping item updated')
-    setEditingShopping(null)
+    try {
+      const updated: ShoppingItem = { ...editingShopping, name: editShoppingName.trim() || editingShopping.name, quantity: editShoppingQty ? Number(editShoppingQty) : null, unit: editShoppingUnit.trim() || null, expectedPrice: editShoppingPrice ? Number(editShoppingPrice) : null, updatedAt: new Date().toISOString() }
+      await persistShopping(updated, 'Shopping item updated')
+      setEditingShopping(null)
+    } catch (error) {
+      setStatus(error instanceof Error ? `Could not save shopping item: ${error.message}` : 'Could not save shopping item.')
+    }
   }
 
   async function toggleShopping(item: ShoppingItem) {
@@ -374,9 +387,13 @@ export default function App() {
 
   async function savePurchaseEdit() {
     if (!editingPurchase) return
-    const updated: Purchase = { ...editingPurchase, itemName: editPurchaseName.trim() || editingPurchase.itemName, quantity: editPurchaseQty ? Number(editPurchaseQty) : null, unit: editPurchaseUnit.trim() || null, price: editPurchasePrice ? Number(editPurchasePrice) : null, updatedAt: new Date().toISOString() }
-    await persistPurchase(updated, 'Purchase updated')
-    setEditingPurchase(null)
+    try {
+      const updated: Purchase = { ...editingPurchase, itemName: editPurchaseName.trim() || editingPurchase.itemName, quantity: editPurchaseQty ? Number(editPurchaseQty) : null, unit: editPurchaseUnit.trim() || null, price: editPurchasePrice ? Number(editPurchasePrice) : null, updatedAt: new Date().toISOString() }
+      await persistPurchase(updated, 'Purchase updated')
+      setEditingPurchase(null)
+    } catch (error) {
+      setStatus(error instanceof Error ? `Could not save purchase: ${error.message}` : 'Could not save purchase.')
+    }
   }
 
   async function startVoice() {

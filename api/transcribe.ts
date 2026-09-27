@@ -8,7 +8,9 @@ export default async function handler(req: Request) {
 
   const key = process.env.GROQ_API_KEY
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
-  const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY
+  // Validate the caller with a server-side key when available. Fall back to the
+  // browser publishable key so the endpoint also works during staged setup.
+  const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY
   const authorization = req.headers.get('authorization')
   if (!supabaseUrl || !supabaseKey || !authorization?.startsWith('Bearer ')) return Response.json({ error: 'Authentication required.' }, { status: 401 })
   const token = authorization.slice('Bearer '.length)
@@ -19,11 +21,14 @@ export default async function handler(req: Request) {
 
   const incoming = await req.formData()
   const file = incoming.get('file')
-  if (!(file instanceof File)) return Response.json({ error: 'Audio file is missing.' }, { status: 400 })
+  if (!file || typeof file !== 'object' || typeof (file as Blob).arrayBuffer !== 'function') {
+    return Response.json({ error: 'Audio file is missing.' }, { status: 400 })
+  }
   if (file.size > 25 * 1024 * 1024) return Response.json({ error: 'Audio file is too large. Keep recordings under 25 MB.' }, { status: 413 })
 
   const outbound = new FormData()
-  outbound.append('file', file, file.name || 'tandaan-voice.webm')
+  const incomingFile = file as File
+  outbound.append('file', incomingFile, incomingFile.name || 'tandaan-voice.webm')
   outbound.append('model', String(incoming.get('model') || 'whisper-large-v3-turbo'))
   outbound.append('response_format', 'json')
   outbound.append('temperature', '0')
