@@ -125,3 +125,8 @@ input:focus { border-color: #67e8f9; box-shadow: 0 0 0 3px rgba(103,232,249,.12)
   .review-row { grid-template-columns: 1fr auto; }
   .review-row span:last-child { grid-column: 2; }
 }
+
+.due-selected { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; border:1px solid #24445f; border-radius:14px; background:#0c2034; }
+.due-selected span { color:#90a5bf; font-size:12px; }
+.due-selected strong { color:#eef6ff; font-size:14px; }
+.text-btn { border:0; background:none; color:#67e8f9; padding:8px 0 0; text-align:left; font-weight:600; }

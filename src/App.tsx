@@ -57,6 +57,7 @@ export default function App() {
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
   const [dueTime, setDueTime] = useState('')
+  const [dueStage, setDueStage] = useState<'choice' | 'details'>('choice')
 
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [editingShopping, setEditingShopping] = useState<ShoppingItem | null>(null)
@@ -233,7 +234,7 @@ export default function App() {
         setDuePrompt({ title })
         setDueDate('')
         setDueTime('')
-        setDueTime('')
+        setDueStage('choice')
       }
       return
     }
@@ -273,7 +274,8 @@ export default function App() {
     const selected = mode === 'today' ? localISODate(new Date()) : tomorrowISO()
     setDueDate(selected)
     setDueTime('')
-    window.setTimeout(() => dueTimeRef.current?.focus(), 60)
+    setDueStage('details')
+    window.setTimeout(() => dueTimeRef.current?.focus(), 80)
   }
 
   async function saveDueChoice(mode: 'custom' | 'none') {
@@ -284,6 +286,7 @@ export default function App() {
       setDuePrompt(null)
       setDueDate('')
       setDueTime('')
+      setDueStage('choice')
       return
     }
 
@@ -296,6 +299,7 @@ export default function App() {
     setDuePrompt(null)
     setDueDate('')
     setDueTime('')
+    setDueStage('choice')
   }
 
   function startEditTask(task: Task) {
@@ -531,20 +535,25 @@ export default function App() {
       {duePrompt && (
         <div className="modal-backdrop">
           <div className="modal card">
-            <div className="modal-header"><div><strong>When is this due?</strong><div className="modal-subtitle">{duePrompt.title}</div></div><button className="icon-btn" onClick={() => setDuePrompt(null)}><X /></button></div>
-            <div className="choice-grid">
-              <button className="choice-card" onClick={() => selectQuickDue('today')}>Today</button>
-              <button className="choice-card" onClick={() => selectQuickDue('tomorrow')}>Tomorrow</button>
-              <button className="choice-card" onClick={() => setDueDate(dueDate || localISODate(new Date()))}>Choose date</button>
-              <button className="choice-card wide" onClick={() => void saveDueChoice('none')}>No due date</button>
-            </div>
-            <div className="custom-due card-inner">
-              <label>Due date <span>Choose a date above or here</span></label>
-              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
-              <label className="optional-time-label">Time <span>optional — leave blank for date only</span></label>
-              <input ref={dueTimeRef} aria-label="Optional time" type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} />
-              <button className="primary full" disabled={!dueDate} onClick={() => void saveDueChoice('custom')}><CalendarPlus size={17} /> Save due date</button>
-            </div>
+            <div className="modal-header"><div><strong>When is this due?</strong><div className="modal-subtitle">{duePrompt.title}</div></div><button className="icon-btn" onClick={() => { setDuePrompt(null); setDueStage('choice') }}><X /></button></div>
+            {dueStage === 'choice' ? (
+              <>
+                <div className="choice-grid">
+                  <button className="choice-card" onClick={() => selectQuickDue('today')}>Today</button>
+                  <button className="choice-card" onClick={() => selectQuickDue('tomorrow')}>Tomorrow</button>
+                  <button className="choice-card wide" onClick={() => { setDueDate(dueDate || localISODate(new Date())); setDueTime(''); setDueStage('details'); window.setTimeout(() => dueTimeRef.current?.focus(), 80) }}>Choose date</button>
+                  <button className="choice-card wide" onClick={() => void saveDueChoice('none')}>No due date</button>
+                </div>
+              </>
+            ) : (
+              <div className="custom-due card-inner">
+                <div className="due-selected"><span>Due date</span><strong>{dueDate}</strong></div>
+                <label className="optional-time-label">Time <span>optional — leave blank for date only</span></label>
+                <input ref={dueTimeRef} aria-label="Optional time" type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} />
+                <div className="modal-actions"><button className="secondary" onClick={() => { setDueTime(''); void saveDueChoice('custom') }}>No specific time</button><button className="primary" onClick={() => void saveDueChoice('custom')}><CalendarPlus size={17} /> Save</button></div>
+                <button className="text-btn" onClick={() => setDueStage('choice')}>Change date</button>
+              </div>
+            )}
           </div>
         </div>
       )}

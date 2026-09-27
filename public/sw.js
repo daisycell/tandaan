@@ -1,21 +1,35 @@
-/* Tandaan service worker. The build step injects the exact production assets. */
+/* Tandaan service worker. postbuild replaces the placeholders below. */
 const CACHE_NAME = '__TANDAAN_CACHE_VERSION__'
 const PRECACHE_URLS = __TANDAAN_PRECACHE_URLS__
 
+async function cacheResponse(url, cache) {
+  try {
+    const response = await fetch(url, { cache: 'no-store' })
+    if (response.ok || response.type === 'opaqueredirect') {
+      await cache.put(url, response.clone())
+      return true
+    }
+  } catch {
+    // Ignore individual cache failures; the app should still install.
+  }
+  return false
+}
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(PRECACHE_URLS))
-      .then(() => self.skipWaiting())
-  )
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME)
+    // Cache each URL independently so one transient failure cannot abort SW install.
+    for (const url of PRECACHE_URLS) await cacheResponse(url, cache)
+    await self.skipWaiting()
+  })())
 })
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then(keys => Promise.all(
-      keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
-    )).then(() => self.clients.claim())
-  )
+  event.waitUntil((async () => {
+    const keys = await caches.keys()
+    await Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))
+    await self.clients.claim()
+  })())
 })
 
 self.addEventListener('fetch', (event) => {
@@ -26,30 +40,53 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) return
 
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then(response => {
-          const copy = response.clone()
-          caches.open(CACHE_NAME).then(cache => cache.put('/index.html', copy))
-          return response
+    event.respondWith((async () => {
+      // Offline-first for Home Screen launches. We serve the cached shell immediately
+      // when available, which is more reliable when the network is unavailable.
+      const cached = await caches.match('/') || await caches.match('/index.html')
+      if (cached) {
+        // Refresh the shell in the background when online.
+        event.waitUntil(
+          fetch(request).then(response => {
+            if (response.ok) return caches.open(CACHE_NAME).then(cache => cache.put('/index.html', response.clone()))
+            return undefined
+          }).catch(() => undefined)
+        )
+        return cached
+      }
+
+      try {
+        const response = await fetch(request)
+        if (response.ok) {
+          const cache = await caches.open(CACHE_NAME)
+          await cache.put('/index.html', response.clone())
+        }
+        return response
+      } catch {
+        return new Response('Tandaan is unavailable offline. Open it once while online to cache the app.', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
         })
-        .catch(() => caches.match('/index.html').then(response => response || caches.match('/')))
-    )
+      }
+    })())
     return
   }
 
-  event.respondWith(
-    caches.match(request).then(cached => {
-      if (cached) return cached
-      return fetch(request).then(response => {
-        if (response.ok) {
-          const copy = response.clone()
-          caches.open(CACHE_NAME).then(cache => cache.put(request, copy))
-        }
-        return response
-      })
-    })
-  )
+  event.respondWith((async () => {
+    const cached = await caches.match(request)
+    if (cached) return cached
+
+    try {
+      const response = await fetch(request)
+      if (response.ok) {
+        const cache = await caches.open(CACHE_NAME)
+        await cache.put(request, response.clone())
+      }
+      return response
+    } catch {
+      return Response.error()
+    }
+  })())
 })
 
 self.addEventListener('push', (event) => {
