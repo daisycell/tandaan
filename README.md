@@ -22,3 +22,11 @@ Theme sticker packs are bundled automatically:
 - Capybara: `/public/stickers/capybara/`
 
 Users choose the animal theme; they do not manually pick stickers.
+
+
+## v37 changes
+- Uses tiny-q5_1 local Whisper model for lower mobile memory pressure.
+- Prevents overlapping transcription calls and recovers from stale "Already transcribing" state.
+- Keeps the model cached locally so it is downloaded once per device/origin.
+- Removes animal emojis from the theme picker; Cat, Golden Retriever, and Capybara sticker packs remain automatic.
+- Uses smaller stat-card stickers, more reliable mobile icon centering, and removes the purchase-empty helper text.

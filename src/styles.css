@@ -308,3 +308,57 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .choice-grid { gap: 8px; }
   .choice-card { min-height: 48px; padding: 12px; }
 }
+
+
+/* v37 mobile header, compact stickers, and simplified theme picker */
+.header-actions { align-items: center; justify-content: center; flex: 0 0 auto; }
+.icon-btn { padding: 0; line-height: 0; align-items: center; justify-items: center; }
+.icon-btn svg { width: 18px; height: 18px; margin: 0; transform: none; }
+.summary-card { padding-right: 42px; }
+.summary-card-sticker { width: 22px; height: 22px; right: 6px; top: 7px; opacity: .88; }
+.summary-card::after { width: 56px; height: 56px; right: -18px; top: -18px; }
+.theme-choice { min-height: 124px; }
+.theme-choice-sticker { height: 48px; }
+.custom-theme-preview-copy strong { font-size: 15px; }
+
+@media (max-width: 620px) {
+  .app-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .brand-row { min-width: 0; align-items: center; }
+  .header-actions { align-self: center; justify-self: end; display: flex; align-items: center; justify-content: center; }
+  .header-actions .icon-btn { display: grid; place-items: center; width: 42px; height: 42px; }
+  .header-actions .icon-btn svg { width: 18px; height: 18px; }
+  .summary-card { min-height: 92px; padding: 11px 38px 11px 11px; }
+  .summary-card-sticker { width: 21px; height: 21px; right: 5px; top: 6px; }
+  .summary-card::after { width: 54px; height: 54px; right: -17px; top: -17px; }
+  .theme-choice { min-height: 96px; grid-template-columns: 58px minmax(0, 1fr); }
+  .theme-choice-sticker { width: 52px; height: 52px; }
+}
+
+
+/* v37 mobile/header refinement */
+.brand-row { min-width: 0; align-items: center; }
+.header-actions { align-items: center; justify-content: center; }
+.header-actions .icon-btn { display: grid; place-items: center; padding: 0; line-height: 0; align-content: center; justify-content: center; }
+.header-actions .icon-btn svg { display: block; width: 18px; height: 18px; margin: 0; }
+.summary-card { padding-right: 38px; }
+.summary-card::after { width: 54px; height: 54px; right: -17px; top: -17px; }
+.summary-card-sticker { width: 20px; height: 20px; right: 7px; top: 7px; opacity: .88; }
+.summary-card-sticker.sticker-b { transform: rotate(6deg); }
+.summary-card-sticker.sticker-c { transform: rotate(-5deg); }
+.theme-choice-sticker { width: 100%; height: 52px; object-fit: contain; border-radius: 11px; background: rgba(255,255,255,.035); }
+
+@media (max-width: 620px) {
+  .app-header { grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: 58px; }
+  .header-actions { gap: 6px; }
+  .header-actions .icon-btn { width: 42px; height: 42px; border-radius: 13px; }
+  .header-actions .icon-btn svg { width: 18px; height: 18px; }
+  .brand { line-height: 1.05; }
+  .summary-card { min-height: 90px; padding: 11px 34px 11px 11px; }
+  .summary-card span { font-size: 10.5px; }
+  .summary-card strong { font-size: 18px; }
+  .summary-card small { font-size: 9.5px; }
+  .summary-card::after { width: 52px; height: 52px; right: -16px; top: -16px; }
+  .summary-card-sticker { width: 19px; height: 19px; right: 7px; top: 7px; }
+  .theme-choice { grid-template-columns: 52px minmax(0,1fr); min-height: 92px; }
+  .theme-choice-sticker { width: 48px; height: 48px; }
+}

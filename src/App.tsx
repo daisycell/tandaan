@@ -661,7 +661,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
+        <div className="brand-row"><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
         <div className="header-actions">
           <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => void ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
           <button className="icon-btn" onClick={openSettings} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
@@ -686,7 +686,7 @@ export default function App() {
         </div>
         <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' ? 'voice-btn transcribing' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing'}>
           {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? (voiceProgress != null ? `Preparing voice · ${voiceProgress}%` : 'Transcribing locally…') : 'Speak'}
+          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? (voiceProgress != null ? `Loading voice · ${voiceProgress}%` : 'Transcribing locally…') : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
         <div className="quick-hints"><strong>Quick input</strong> · Type naturally or tap Speak. A short pause after you finish speaking stops the recording automatically. Keep a voice capture under 15 seconds for on-device stability. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM” · “shampoo 1 habon 2 toothpaste kalamay delata 3”</div>
@@ -739,7 +739,6 @@ export default function App() {
         <div className="purchase-total card"><div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small></div>
         <div className="swipe-hint">Swipe an item left all the way to delete it.</div>
         <div className="task-list">
-          {purchases.length === 0 && <div className="empty card">No purchases yet. Try “Rice 40” or “Egg 1 tray 400”.</div>}
           {purchases.map(item => (
             <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
               <div className="task-card card">
@@ -823,7 +822,6 @@ export default function App() {
               <div className="theme-grid">
                 {THEME_OPTIONS.map(option => (
                   <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
-                    <span className="theme-animal-icon" aria-hidden="true">{option.emoji}</span>
                     {draftCustomizations.stickers[option.id][0] ? <img className="theme-choice-sticker" src={stickerUrl(option.id, draftCustomizations.stickers[option.id][0])} alt="" /> : <span className="theme-swatch" style={{ background: option.swatch }} aria-hidden="true" />}
                     <span><strong>{option.name}</strong><small>{option.description}</small></span>
                     {draftTheme === option.id && <CheckCircle2 size={17} />}
@@ -838,7 +836,7 @@ export default function App() {
               <div className="custom-theme-preview">
                 {draftCustomizations.backgrounds[draftTheme] && <div className="custom-theme-preview-bg" style={{ backgroundImage: `url(\"${draftCustomizations.backgrounds[draftTheme]}\")` }} aria-hidden="true" />}
                 <div className="custom-theme-preview-overlay" aria-hidden="true" />
-                <div className="custom-theme-preview-copy"><strong>{themeOption(draftTheme).emoji} {themeOption(draftTheme).name}</strong><span>Sticker pack included automatically</span></div>
+                <div className="custom-theme-preview-copy"><strong>{themeOption(draftTheme).name}</strong><span>Sticker pack included automatically</span></div>
                 <div className="custom-theme-preview-stickers">
                   {STICKERS[draftTheme].slice(0, 5).map(file => <img key={file} src={stickerUrl(draftTheme, file)} alt="" aria-hidden="true" />)}
                 </div>
