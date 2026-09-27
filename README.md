@@ -1,86 +1,13 @@
 # Tandaan 2.0
 
-Offline-first PWA for tasks, shopping, purchases, voice input, and reminders.
-
-## Current stack
-- React + TypeScript + Vite
-- PWA via `a small hand-authored PWA service worker` with a custom service worker
-- Dexie / IndexedDB for local-first data
-- Supabase Auth + PostgreSQL + RLS
-- Vercel Edge/Server Functions for speech transcription and reminder delivery
-- Groq Whisper Large V3 Turbo for multilingual online transcription
-- Web Push for Home Screen notifications on supported iOS versions
-
-## Local setup
-1. Copy `.env.example` to `.env.local` and fill the Supabase values.
-2. `npm install`
-3. `npm run dev`
-4. `npm run build`
+Tandaan is an offline-first personal memory web app built with React, TypeScript, Vite, PWA, Dexie, and Supabase.
 
 ## Voice
-The microphone records locally with noise suppression, echo cancellation and automatic gain control. When online it uploads the short recording to `/api/transcribe`, which calls Groq Whisper Large V3 Turbo without a forced language so the recognizer can transcribe multilingual input. Groq documents Whisper Large V3 Turbo as multilingual and accepts webm/mp4/m4a/wav audio; the hosted API has Free Plan limits that apply to usage.
 
-Tandaan does not show a “Prepare offline voice” step. Voice transcription in v16 is online by design so the user does not have to download and wait for a large model. Offline CRUD remains available. A later release can add a truly local transcription engine as an optional offline enhancement.
+Voice transcription runs locally in the browser using `@timur00kh/whisper.wasm`, a browser-first TypeScript wrapper around whisper.cpp. The multilingual model is loaded only on first voice use and cached in IndexedDB, so normal app startup does not wait for the speech model. Language is automatic; no language selector is shown. The current model is `base-q5_1` (~57 MB) for a balance of multilingual accuracy and on-device size.
 
-## Web Push reminders
-Home Screen web apps on supported iOS versions can receive Web Push. The user must explicitly allow notifications from a direct interaction. Tandaan requests permission when a task with a due date is saved, or from the bell button in the header.
+The microphone recording uses browser noise suppression, echo cancellation, and automatic gain control. After the model is cached, voice transcription works without sending the recording to a server.
 
-The default reminder is 1 day before the due date. If a task has a time, the reminder is the same local clock time on the previous day. For date-only tasks, Tandaan uses 9:00 AM local time on the previous day. The notification is an iPhone/web-app notification, not a guaranteed Clock-style alarm; iOS controls its sound and Focus behavior.
+## Offline PWA
 
-### VAPID keys
-Run `npm run generate:vapid` after `npm install` and keep the private key secret. Put the public key in `VITE_VAPID_PUBLIC_KEY` and `WEB_PUSH_VAPID_PUBLIC_KEY`; put the private key only in `WEB_PUSH_VAPID_PRIVATE_KEY`. Use a `mailto:` address for `WEB_PUSH_SUBJECT`.
-
-### Server variables
-Set these in Vercel: `GROQ_API_KEY`, `SUPABASE_URL` (or reuse `VITE_SUPABASE_URL`), `SUPABASE_SECRET_KEY` (preferred with the newer `sb_secret_...` key; `SUPABASE_SERVICE_ROLE_KEY` is also accepted), `WEB_PUSH_VAPID_PUBLIC_KEY`, `WEB_PUSH_VAPID_PRIVATE_KEY`, `WEB_PUSH_SUBJECT`, and `REMINDER_CRON_SECRET`. Never put a Supabase secret key in a `VITE_` variable.
-
-The client also needs `VITE_VAPID_PUBLIC_KEY` plus the existing `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
-
-### Supabase reminder scheduler
-After deploying, use `supabase/reminders-cron.sql` and replace its two placeholders with the production Vercel reminder endpoint and the same `REMINDER_CRON_SECRET`. Supabase Cron can make recurring HTTP requests and this project schedules the reminder endpoint every minute.
-
-## Quick reminder setup
-
-1. Create VAPID keys: `npm run generate:vapid`.
-2. Add the Vercel variables from `.env.example`.
-3. Run `supabase/migrations/20260927000200_reminders_and_push.sql` in Supabase SQL Editor (or run the equivalent included in `schema.sql`).
-4. After the production deployment exists, run `supabase/reminders-cron.sql` once with your production Vercel URL and the same cron secret.
-5. Install Tandaan to the iPhone Home Screen and create a task with a due date. Allow notifications when prompted.
-
-
-## v16.1 build fixes
-This package includes TypeScript fixes for Vite PWA registration, duplicate parser keys, and the injected Workbox manifest typing.
-
-
-## PWA note
-This build intentionally uses `public/sw.js` instead of `vite-plugin-pwa`/Workbox injection. The service worker provides the offline shell and Web Push handlers without a build-time manifest injection step.
-
-## v18 notes
-- Voice no longer fails immediately when an anonymous session is missing; it attempts to establish one when online.
-- Task due-date prompts now let Today/Tomorrow flow directly into an optional time picker, with date-only still supported.
-- The PWA build now precaches the exact Vite output assets so a Home Screen install can reopen offline reliably after the first online load.
-
-
-## v21 voice endpoint fix
-The transcription endpoint now accepts raw audio bytes instead of relying on multipart form parsing inside the Vercel Node function, validates the Supabase bearer token server-side, and returns JSON diagnostics for server failures.
-
-
-## Voice latency
-Voice now uses a lightweight Vercel Edge endpoint with a direct multipart request to Groq, avoiding the heavier SDK path. Recordings also auto-stop after a short pause once speech has started, reducing upload time. The app still keeps a 45-second client guard so a stuck request fails cleanly.
-
-
-## v25 UX and voice notes
-- Full left swipe deletes automatically on release; there is no delete-button confirmation step.
-- Default theme is Royal Purple, with additional themes in My Profile & Settings.
-- Profile name remains cloud-synced; theme is stored locally as a device preference.
-- Voice recordings auto-stop after about 1.6 seconds of silence once speech has started, with a 30-second maximum recording length.
-- Voice transcription is still online in this release; there is no model preparation/download screen.
-- Compact multi-item inputs such as "shampoo 1 habon 2 toothpaste kalamay delata 3" are routed to Shopping when they contain multiple recognized household items and quantity-like values without a price marker.
-
-
-## Themes
-Tandaan now includes exactly three animal themes: Cat (purple), Golden Retriever (warm gold), and Capybara (earthy). The selected theme is stored locally and synchronized to the user's profile.
-
-
-## V31 Theme Customization
-
-Tandaan includes three animal themes only: Cat, Golden Retriever, and Capybara. The supplied sticker assets are bundled by theme under `public/stickers/`. Users can select up to six stickers per animal and choose a local photo background for each animal theme from My Profile & Settings. Theme sticker/background choices are device-local for now; the selected base theme remains part of the synced profile.
+Only the app shell and entry assets are precached during service-worker installation. Sticker images and lazy voice chunks are fetched on demand and runtime-cached so the initial app open stays fast.

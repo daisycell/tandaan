@@ -1,14 +1,24 @@
-import { supabase } from './supabase'
-import { getUserId } from './sync'
+let whisperEnginePromise: Promise<WhisperEngine> | null = null
 
 export type VoiceCaptureResult = { blob: Blob; durationMs: number }
 export type VoiceRecorder = { stop: () => Promise<VoiceCaptureResult>; cancel: () => void }
+
+type WhisperEngine = {
+  transcribe: (audioData: Float32Array) => Promise<string>
+  loadProgress: number
+}
+
+type ProgressCallback = (progress: number) => void
 
 function preferredMimeType() {
   const types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
   return types.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) || ''
 }
 
+/**
+ * Capture clean mono microphone audio. The audio stays in the browser;
+ * transcription is performed locally by whisper.cpp/WASM after recording.
+ */
 export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 15_000): Promise<VoiceRecorder> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     throw new Error('Microphone recording is not supported by this browser.')
@@ -68,7 +78,10 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
   const updateLevel = () => {
     analyser.getByteTimeDomainData(data)
     let sum = 0
-    for (let i = 0; i < data.length; i += 1) { const v = (data[i] - 128) / 128; sum += v * v }
+    for (let i = 0; i < data.length; i += 1) {
+      const v = (data[i] - 128) / 128
+      sum += v * v
+    }
     const rms = Math.sqrt(sum / data.length)
     onLevel?.(Math.min(1, rms * 4))
     if (rms > silenceThreshold) {
@@ -90,37 +103,67 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
   return { stop, cancel }
 }
 
-export async function transcribeVoice(blob: Blob, durationMs: number) {
-  if (blob.size > 4 * 1024 * 1024) throw new Error('The recording is too large. Please keep voice entries short.')
+function chooseModelId() {
+  // Base Q5_1 is ~57 MB and is multilingual. It is loaded only on first voice use
+  // and then cached by the whisper.wasm ModelManager in IndexedDB.
+  return 'base-q5_1' as const
+}
+
+async function loadWhisperEngine(onProgress?: ProgressCallback): Promise<WhisperEngine> {
+  if (whisperEnginePromise) return whisperEnginePromise
+
+  whisperEnginePromise = (async () => {
+    try {
+      const { WhisperWasmService, ModelManager, convertFromFile } = await import('@timur00kh/whisper.wasm')
+      const service = new WhisperWasmService({ logLevel: 0 })
+      const supported = await service.checkWasmSupport()
+      if (!supported) throw new Error('This browser does not support the WebAssembly features needed for offline voice.')
+
+      const manager = new ModelManager({ logLevel: 0 })
+      const model = await manager.loadModel(chooseModelId(), true, progress => onProgress?.(progress))
+      await service.initModel(model)
+
+      const threads = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+        ? (crossOriginIsolated ? 3 : 2)
+        : (crossOriginIsolated ? 4 : 2)
+
+      return {
+        loadProgress: 100,
+        transcribe: async (audioData: Float32Array) => {
+          const result = await service.transcribe(audioData, undefined, {
+            language: 'auto',
+            threads,
+            translate: false,
+          })
+          const text = result.segments.map(segment => segment.text.trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+          if (!text) throw new Error('No speech was recognized. Try speaking a little closer to the phone.')
+          return text
+        }
+      }
+    } catch (error) {
+      whisperEnginePromise = null
+      throw error
+    }
+  })()
+
+  return whisperEnginePromise
+}
+
+export async function transcribeVoice(blob: Blob, durationMs: number, onProgress?: ProgressCallback) {
   if (durationMs < 350) throw new Error('The recording is too short.')
-  if (!supabase) throw new Error('Tandaan voice is not configured.')
-
-  let session = (await supabase.auth.getSession()).data.session
-  if (!session) {
-    await getUserId()
-    session = (await supabase.auth.getSession()).data.session
+  if (typeof window === 'undefined' || typeof AudioContext === 'undefined') {
+    throw new Error('Offline voice is not supported in this environment.')
   }
-  if (!session?.access_token) throw new Error('Voice needs a Tandaan session. Please open Tandaan online once and try again.')
 
-  const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), 18_000)
+  const { convertFromFile } = await import('@timur00kh/whisper.wasm')
+  const file = new File([blob], 'tandaan-voice.webm', { type: blob.type || 'audio/webm' })
+  const { audioData } = await convertFromFile(file, { normalize: true })
+  const engine = await loadWhisperEngine(onProgress)
   try {
-    const response = await fetch('/api/transcribe', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': blob.type || 'audio/webm' },
-      cache: 'no-store',
-      body: blob,
-      signal: controller.signal,
-    })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(typeof payload?.error === 'string' ? payload.error : `Voice service returned HTTP ${response.status}.`)
-    if (!payload?.text) throw new Error('No speech was recognized. Try speaking a little closer to the phone.')
-    return String(payload.text).trim()
+    return await engine.transcribe(audioData)
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('Voice transcription took too long. Try a shorter phrase, then try again.')
-    if (error instanceof TypeError) throw new Error('Could not reach the voice service. Check your internet connection and try again.')
-    throw error
-  } finally {
-    clearTimeout(timeoutId)
+    // A WASM execution failure can invalidate the module; force a fresh engine next time.
+    whisperEnginePromise = null
+    throw error instanceof Error ? new Error(`Local voice transcription failed: ${error.message}`) : new Error('Local voice transcription failed.')
   }
 }

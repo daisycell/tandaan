@@ -126,59 +126,79 @@ export default function App() {
   const [remindersEnabled, setRemindersEnabled] = useState(false)
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false
+    ;(async () => {
       try {
-        setTasks(await db.tasks.toArray())
-        setShopping(await db.shopping.toArray())
-        setPurchases(await db.purchases.toArray())
-        const saved = await getLocalName()
-        const savedTheme = await getLocalTheme()
-        const savedCustomizations = await getLocalThemeCustomizations<ThemeCustomizations>()
+        // Render from local IndexedDB immediately; cloud work happens in the background.
+        const [localTasks, localShopping, localPurchases, saved, savedTheme, savedCustomizations] = await Promise.all([
+          db.tasks.toArray(),
+          db.shopping.toArray(),
+          db.purchases.toArray(),
+          getLocalName(),
+          getLocalTheme(),
+          getLocalThemeCustomizations<ThemeCustomizations>(),
+        ])
+        if (cancelled) return
+        setTasks(localTasks)
+        setShopping(localShopping)
+        setPurchases(localPurchases)
+        setName(saved)
+        setSettingsName(saved)
+        if (isThemeId(savedTheme)) setTheme(savedTheme)
         if (savedCustomizations) {
           const normalized = normalizeThemeCustomizations(savedCustomizations)
           setThemeCustomizations(normalized)
           setDraftCustomizations(normalized)
         }
-        setName(saved)
-        setSettingsName(saved)
-        if (isThemeId(savedTheme)) setTheme(savedTheme)
-        if (supabase) {
-          const userId = await getUserId()
-          if (userId) {
-            try {
-              const profile = await getRemoteProfile()
-              if (profile?.display_name) {
-                await setLocalName(profile.display_name)
-                setName(profile.display_name)
-                setSettingsName(profile.display_name)
-                if (isThemeId(profile.theme)) {
-                  await setLocalTheme(profile.theme)
-                  setTheme(profile.theme)
-                }
-              } else if (saved) {
-                await syncProfile(saved, Intl.DateTimeFormat().resolvedOptions().timeZone, isThemeId(savedTheme) ? savedTheme : DEFAULT_THEME)
-              }
-              const synced = await syncAll()
-              setTasks(synced.tasks)
-              setShopping(synced.shoppingItems)
-              setPurchases(synced.purchases)
-              setStatus('Synced · offline ready')
-            } catch {
-              setStatus('Offline · changes saved on this phone')
-            }
-          }
-        }
-        if (pushSupported()) {
-          const sub = await getPushSubscription()
-          setRemindersEnabled(Boolean(sub))
-        }
       } catch {
-        setStatus('Local storage unavailable')
+        if (!cancelled) setStatus('Local storage unavailable')
       } finally {
-        setProfileReady(true)
+        if (!cancelled) setProfileReady(true)
+      }
+
+      // Never hold the first paint hostage to network/auth. Sync in the background.
+      if (supabase && navigator.onLine) {
+        void (async () => {
+          try {
+            const userId = await getUserId()
+            if (!userId || cancelled) return
+            const saved = await getLocalName()
+            const savedTheme = await getLocalTheme()
+            const profile = await getRemoteProfile()
+            if (cancelled) return
+            if (profile?.display_name) {
+              await setLocalName(profile.display_name)
+              setName(profile.display_name)
+              setSettingsName(profile.display_name)
+            } else if (saved) {
+              await syncProfile(saved, Intl.DateTimeFormat().resolvedOptions().timeZone, isThemeId(savedTheme) ? savedTheme : DEFAULT_THEME)
+            }
+            const synced = await syncAll()
+            if (cancelled) return
+            setTasks(synced.tasks)
+            setShopping(synced.shoppingItems)
+            setPurchases(synced.purchases)
+            setStatus('Synced · offline ready')
+          } catch {
+            if (!cancelled) setStatus('Offline-ready · sync pending')
+          }
+        })()
+      }
+
+      if (pushSupported()) {
+        try {
+          const sub = await getPushSubscription()
+          if (!cancelled) setRemindersEnabled(Boolean(sub))
+        } catch {
+          // Notification checks are non-blocking.
+        }
       }
     })()
-    return () => recorderRef.current?.cancel()
+
+    return () => {
+      cancelled = true
+      recorderRef.current?.cancel()
+    }
   }, [])
 
   useEffect(() => {
@@ -501,7 +521,10 @@ export default function App() {
         setVoiceState('transcribing')
         try {
           const result = await recorder.stop()
-          const transcript = await transcribeVoice(result.blob, result.durationMs)
+          setStatus('Voice: preparing offline engine…')
+          const transcript = await transcribeVoice(result.blob, result.durationMs, progress => {
+            setStatus(progress >= 100 ? 'Voice ready · transcribing on this device…' : `Voice engine: ${progress}%`)
+          })
           setVoiceTranscript(transcript)
           setInput(transcript)
           setVoiceReview(parseInput(transcript))
@@ -580,7 +603,7 @@ export default function App() {
         </div>
         <button className={voiceState === 'recording' ? 'voice-btn recording' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing'}>
           {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? 'Working…' : 'Speak'}
+          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
         <div className="quick-hints"><strong>Quick input</strong> · Type naturally or tap Speak. A short pause after you finish speaking stops the recording automatically. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM” · “shampoo 1 habon 2 toothpaste kalamay delata 3”</div>

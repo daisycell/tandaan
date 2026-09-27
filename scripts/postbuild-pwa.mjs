@@ -18,15 +18,28 @@ async function walk(dir, prefix = '') {
   return files
 }
 
-const allFiles = (await walk(dist)).filter(file => !file.endsWith('/sw.js'))
+const allFiles = (await walk(dist))
+  .filter(file => !file.endsWith('/sw.js'))
   .filter(file => !file.endsWith('.map'))
-  .sort()
+  .filter(file => !file.startsWith('/stickers/'))
 
-// Explicitly cache the PWA navigation entrypoint and common shell URLs.
-// The deployed service worker can then answer a direct Home Screen launch
-// request for '/' while offline instead of relying only on index.html.
-const shellUrls = ['/', '/index.html', '/manifest.webmanifest']
-const precacheUrls = [...new Set([...shellUrls, ...allFiles])].sort()
+const indexHtml = await fs.readFile(path.join(dist, 'index.html'), 'utf8')
+const entryAssets = [...indexHtml.matchAll(/(?:src|href)=["'](\/assets\/[^"']+)["']/g)].map(match => match[1])
+
+const staticEssentials = [
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  '/favicon.svg',
+  '/icons/icon-180.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+]
+
+const precacheUrls = [...new Set([
+  ...staticEssentials.filter(file => allFiles.includes(file) || file === '/'),
+  ...entryAssets,
+])].sort()
 
 const hash = crypto.createHash('sha256').update(JSON.stringify(precacheUrls)).digest('hex').slice(0, 12)
 const source = await fs.readFile(swPath, 'utf8')
@@ -35,4 +48,4 @@ const output = source
   .replace('__TANDAAN_PRECACHE_URLS__', JSON.stringify(precacheUrls, null, 2))
 
 await fs.writeFile(swPath, output)
-console.log(`PWA precache generated: ${precacheUrls.length} URLs (cache ${hash})`)
+console.log(`PWA precache generated: ${precacheUrls.length} shell URLs (cache ${hash}); lazy chunks and stickers are runtime-cached.`)

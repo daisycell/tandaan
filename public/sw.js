@@ -18,8 +18,8 @@ async function cacheResponse(url, cache) {
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME)
-    // Cache each URL independently so one transient failure cannot abort SW install.
-    for (const url of PRECACHE_URLS) await cacheResponse(url, cache)
+    // Cache shell URLs in parallel; individual failures do not abort SW install.
+    await Promise.all(PRECACHE_URLS.map(url => cacheResponse(url, cache)))
     await self.skipWaiting()
   })())
 })
