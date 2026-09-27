@@ -9,7 +9,7 @@ import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
 import { startVoiceCapture, transcribeVoice, type VoiceRecorder } from './voice'
 import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
-import { DEFAULT_THEME, THEME_OPTIONS, isThemeId } from './theme'
+import { DEFAULT_THEME, THEME_OPTIONS, isThemeId, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
 
 function newId() {
@@ -114,8 +114,12 @@ export default function App() {
                 await setLocalName(profile.display_name)
                 setName(profile.display_name)
                 setSettingsName(profile.display_name)
+                if (isThemeId(profile.theme)) {
+                  await setLocalTheme(profile.theme)
+                  setTheme(profile.theme)
+                }
               } else if (saved) {
-                await syncProfile(saved, Intl.DateTimeFormat().resolvedOptions().timeZone)
+                await syncProfile(saved, Intl.DateTimeFormat().resolvedOptions().timeZone, isThemeId(savedTheme) ? savedTheme : DEFAULT_THEME)
               }
               const synced = await syncAll()
               setTasks(synced.tasks)
@@ -171,6 +175,7 @@ export default function App() {
   }, [theme])
 
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
+  const activeTheme = themeOption(theme)
   const todayCount = tasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
   const purchaseTotal = purchases.reduce((sum, purchase) => sum + (purchase.price ?? 0), 0)
   const pricedPurchaseCount = purchases.filter(p => p.price != null).length
@@ -198,7 +203,7 @@ export default function App() {
     setName(clean)
     if (supabase) {
       try {
-        await syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone)
+        await syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone, theme)
         setStatus('Profile saved · synced')
       } catch {
         setStatus('Profile saved locally · sync pending')
@@ -214,7 +219,7 @@ export default function App() {
     await setLocalTheme(draftTheme)
     if (supabase) {
       try {
-        await syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone)
+        await syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone, draftTheme)
         setStatus('Settings saved · synced')
       } catch {
         setStatus('Settings saved locally · sync pending')
@@ -503,7 +508,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
+        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div><div className="theme-animal-badge" title={`${activeTheme.name} theme`} aria-label={`${activeTheme.name} theme`}>{activeTheme.emoji}</div></div>
         <div className="header-actions">
           <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => void ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
           <button className="icon-btn" onClick={openSettings} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
@@ -511,7 +516,8 @@ export default function App() {
       </header>
 
       <section className="hero">
-        <div className="hero-eyebrow"><UserRound size={15} /> My space</div>
+        <div className="theme-ambient" aria-hidden="true">{activeTheme.emoji}</div>
+        <div className="hero-eyebrow"><span className="hero-animal">{activeTheme.emoji}</span><UserRound size={15} /> My space <span className="theme-name-pill">{activeTheme.name} theme</span></div>
         <h1>{greeting}, {name} 👋</h1>
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
         <div className="summary-grid">
@@ -646,11 +652,12 @@ export default function App() {
             </section>
 
             <section className="settings-section">
-              <div className="settings-section-title"><Palette size={17} /><div><strong>Theme</strong><span>Choose how Tandaan looks.</span></div></div>
+              <div className="settings-section-title"><Palette size={17} /><div><strong>Theme</strong><span>Choose one of Tandaan's three animal themes.</span></div></div>
               <div className="theme-grid">
                 {THEME_OPTIONS.map(option => (
                   <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
-                    <span className="theme-swatch" style={{ background: option.swatch }} />
+                    <span className="theme-animal-icon" aria-hidden="true">{option.emoji}</span>
+                    <span className="theme-swatch" style={{ background: option.swatch }} aria-hidden="true" />
                     <span><strong>{option.name}</strong><small>{option.description}</small></span>
                     {draftTheme === option.id && <CheckCircle2 size={17} />}
                   </button>

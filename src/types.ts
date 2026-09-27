@@ -36,7 +36,7 @@ export type Purchase = {
   updatedAt: string
 }
 
-export type ThemeId = 'purple' | 'midnight' | 'lavender' | 'rose' | 'ocean' | 'emerald'
+export type ThemeId = 'cat' | 'dog' | 'capybara'
 
 export type Profile = {
   id: string

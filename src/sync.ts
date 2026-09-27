@@ -1,6 +1,6 @@
 import { db } from './db'
 import { supabase } from './supabase'
-import type { Purchase, ShoppingItem, Task } from './types'
+import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
 
 function toDbTask(task: Task, userId: string) {
   return { id: task.id, user_id: userId, title: task.title, is_completed: task.isCompleted, due_date: task.dueDate ?? null, due_time: task.dueTime ?? null, reminder_enabled: task.reminderEnabled ?? true, reminder_minutes_before: task.reminderMinutesBefore ?? 1440, reminder_at: task.reminderAt ?? null, reminder_sent_at: task.reminderSentAt ?? null, created_at: task.createdAt, updated_at: task.updatedAt }
@@ -30,11 +30,11 @@ export async function getUserId() {
   return signInData.user?.id ?? null
 }
 
-export async function syncProfile(name: string, timezone: string) {
+export async function syncProfile(name: string, timezone: string, theme: ThemeId = 'cat') {
   if (!supabase) return
   const userId = await getUserId()
   if (!userId) return
-  const { error } = await supabase.from('profiles').upsert({ id: userId, display_name: name, timezone, onboarding_complete: true, updated_at: new Date().toISOString() })
+  const { error } = await supabase.from('profiles').upsert({ id: userId, display_name: name, timezone, onboarding_complete: true, theme, updated_at: new Date().toISOString() })
   if (error) throw error
 }
 
@@ -42,7 +42,7 @@ export async function getRemoteProfile() {
   if (!supabase) return null
   const userId = await getUserId()
   if (!userId) return null
-  const { data, error } = await supabase.from('profiles').select('id,display_name,timezone,onboarding_complete').eq('id', userId).maybeSingle()
+  const { data, error } = await supabase.from('profiles').select('id,display_name,timezone,onboarding_complete,theme').eq('id', userId).maybeSingle()
   if (error) throw error
   return data
 }

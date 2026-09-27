@@ -75,3 +75,7 @@ Voice now uses a lightweight Vercel Edge endpoint with a direct multipart reques
 - Voice recordings auto-stop after about 1.6 seconds of silence once speech has started, with a 30-second maximum recording length.
 - Voice transcription is still online in this release; there is no model preparation/download screen.
 - Compact multi-item inputs such as "shampoo 1 habon 2 toothpaste kalamay delata 3" are routed to Shopping when they contain multiple recognized household items and quantity-like values without a price marker.
+
+
+## Themes
+Tandaan now includes exactly three animal themes: Cat (purple), Golden Retriever (warm gold), and Capybara (earthy). The selected theme is stored locally and synchronized to the user's profile.
