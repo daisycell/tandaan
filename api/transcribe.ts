@@ -30,8 +30,8 @@ export default async function handler(req: Request) {
     const authClient = createClient(supabaseUrl, supabaseKey, {
       auth: { persistSession: false, autoRefreshToken: false }
     })
-    const { data: userData, error: userError } = await authClient.auth.getUser(token)
-    if (userError || !userData.user) return json({ error: 'Invalid Tandaan session.' }, 401)
+    const { data: claimsData, error: claimsError } = await authClient.auth.getClaims(token)
+    if (claimsError || !claimsData?.claims?.sub) return json({ error: 'Invalid Tandaan session.' }, 401)
 
     const raw = new Uint8Array(await req.arrayBuffer())
     if (raw.byteLength === 0) return json({ error: 'Audio file is missing.' }, 400)
@@ -46,9 +46,8 @@ export default async function handler(req: Request) {
     const outbound = new FormData()
     outbound.append('file', new File([raw], `tandaan-voice.${extension}`, { type: mime }))
     outbound.append('model', 'whisper-large-v3-turbo')
-    outbound.append('response_format', 'json')
+    outbound.append('response_format', 'text')
     outbound.append('temperature', '0')
-    outbound.append('prompt', 'Tandaan context. Philippine languages and code-switching may include Hiligaynon/Ilonggo, Cebuano/Bisaya, Tagalog/Filipino, and English. Common words: bugas, itlog, mabakal, bakal, palit, nabakal, nakapalit, sang, kag, ka, kilo, kilos, tray, lata, pieces, pesos, baylo, kuryente.')
 
     const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
@@ -57,19 +56,26 @@ export default async function handler(req: Request) {
     })
 
     const content = await response.text()
+    const contentType = response.headers.get('content-type') || ''
     let payload: any = {}
-    try {
-      payload = JSON.parse(content)
-    } catch {
-      payload = { error: content.slice(0, 500) }
+    let text = ''
+
+    if (contentType.includes('text/plain')) {
+      text = content.trim()
+    } else {
+      try {
+        payload = JSON.parse(content)
+      } catch {
+        payload = { error: content.slice(0, 500) }
+      }
+      text = typeof payload?.text === 'string' ? payload.text.trim() : ''
     }
 
     if (!response.ok) {
-      const message = payload?.error?.message || payload?.error || 'Groq transcription failed.'
+      const message = payload?.error?.message || payload?.error || content.slice(0, 500) || 'Groq transcription failed.'
       return json({ error: String(message) }, response.status)
     }
 
-    const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
     if (!text) return json({ error: 'No speech was recognized. Try speaking a little closer to the phone.' }, 422)
 
     return json({ text })

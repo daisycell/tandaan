@@ -1,3 +1,6 @@
+import { supabase } from './supabase'
+import { getUserId } from './sync'
+
 export type VoiceCaptureResult = {
   blob: Blob
   durationMs: number
@@ -9,11 +12,11 @@ export type VoiceRecorder = {
 }
 
 function preferredMimeType() {
-  const types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
   return types.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) || ''
 }
 
-export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 90_000): Promise<VoiceRecorder> {
+export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 45_000): Promise<VoiceRecorder> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     throw new Error('Microphone recording is not supported by this browser.')
   }
@@ -109,16 +112,14 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
 
   const mimeType = blob.type || 'audio/webm'
 
-  const supabaseModule = await import('./supabase')
-  const syncModule = await import('./sync')
-  if (!supabaseModule.supabase) throw new Error('Tandaan voice is not configured.')
+  if (!supabase) throw new Error('Tandaan voice is not configured.')
 
-  let sessionResult = await supabaseModule.supabase.auth.getSession()
+  let sessionResult = await supabase.auth.getSession()
   let token = sessionResult.data.session?.access_token
   if (!token) {
     try {
-      await syncModule.getUserId()
-      sessionResult = await supabaseModule.supabase.auth.getSession()
+      await getUserId()
+      sessionResult = await supabase.auth.getSession()
       token = sessionResult.data.session?.access_token
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not reconnect Tandaan.'

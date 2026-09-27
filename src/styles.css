@@ -130,3 +130,43 @@ input:focus { border-color: #67e8f9; box-shadow: 0 0 0 3px rgba(103,232,249,.12)
 .due-selected span { color:#90a5bf; font-size:12px; }
 .due-selected strong { color:#eef6ff; font-size:14px; }
 .text-btn { border:0; background:none; color:#67e8f9; padding:8px 0 0; text-align:left; font-weight:600; }
+
+/* Swipe-left deletion for touch devices (and mouse/trackpad testing). */
+.swipe-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+}
+.swipe-delete-bg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: #5b1f2d;
+}
+.swipe-delete-button {
+  width: 92px;
+  border: 0;
+  background: #b4233a;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 800;
+}
+.swipe-content {
+  position: relative;
+  z-index: 1;
+  touch-action: pan-y;
+  transition: transform .18s ease;
+}
+.swipe-content.dragging {
+  transition: none;
+  cursor: grabbing;
+}
+.swipe-content .task-card {
+  border-radius: 20px;
+}

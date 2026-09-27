@@ -9,6 +9,7 @@ import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
 import { startVoiceCapture, transcribeVoice, type VoiceRecorder } from './voice'
 import type { Purchase, ShoppingItem, Task } from './types'
+import SwipeToDelete from './SwipeToDelete'
 
 function newId() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -427,7 +428,7 @@ export default function App() {
     }
 
     try {
-      const recorder = await startVoiceCapture(level => setVoiceLevel(level))
+      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 45_000)
       recorderRef.current = recorder
       setVoiceState('recording')
     } catch (error) {
@@ -480,7 +481,7 @@ export default function App() {
           {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? 'Transcribing…' : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
-        <div className="quick-hints">Voice transcription uses the secure server voice service when online. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM”</div>
+        <div className="quick-hints">Voice is best with short, natural phrases. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM” · “Shampoo 1 habon 2 toothpaste kalamay delata 3”</div>
         {voiceError && <div className="inline-error">{voiceError}</div>}
       </section>
 
@@ -489,18 +490,19 @@ export default function App() {
         <div className="task-list">
           {tasks.length === 0 && <div className="empty card">No tasks yet. Add one above.</div>}
           {tasks.map(task => (
-            <div className="task-card card" key={task.id}>
-              <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
-              <div className="task-main">
-                <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
-                {task.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</div>}
+            <SwipeToDelete key={task.id} onDelete={() => void deleteTask(task)} label="Delete">
+              <div className="task-card card">
+                <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
+                <div className="task-main">
+                  <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
+                  {task.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</div>}
+                </div>
+                <div className="task-actions">
+                  {!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}
+                  <button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button>
+                </div>
               </div>
-              <div className="task-actions">
-                {!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}
-                <button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button>
-                <button className="icon-btn danger" onClick={() => void deleteTask(task)} title="Delete"><Trash2 size={17} /></button>
-              </div>
-            </div>
+            </SwipeToDelete>
           ))}
         </div>
       </section>
@@ -510,14 +512,16 @@ export default function App() {
         <div className="task-list">
           {shopping.length === 0 && <div className="empty card">No shopping items yet.</div>}
           {shopping.map(item => (
-            <div className="task-card card" key={item.id}>
-              <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
-              <div className="task-main">
-                <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
-                {(item.quantity != null || item.unit || item.expectedPrice != null) && <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</div>}
+            <SwipeToDelete key={item.id} onDelete={() => void deleteShopping(item)} label="Delete">
+              <div className="task-card card">
+                <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
+                <div className="task-main">
+                  <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
+                  {(item.quantity != null || item.unit || item.expectedPrice != null) && <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</div>}
+                </div>
+                <div className="task-actions"><button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button></div>
               </div>
-              <div className="task-actions"><button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button><button className="icon-btn danger" onClick={() => void deleteShopping(item)} title="Delete shopping item"><Trash2 size={17} /></button></div>
-            </div>
+            </SwipeToDelete>
           ))}
         </div>
       </section>
@@ -528,11 +532,13 @@ export default function App() {
         <div className="task-list">
           {purchases.length === 0 && <div className="empty card">No purchases yet. Try “Rice 40” or “Egg 1 tray 400”.</div>}
           {purchases.map(item => (
-            <div className="task-card card" key={item.id}>
-              <div className="purchase-dot">₱</div>
-              <div className="task-main"><div className="task-title">{item.itemName}</div><div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div></div>
-              <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button><button className="icon-btn danger" onClick={() => void deletePurchase(item)} title="Delete purchase"><Trash2 size={17} /></button></div>
-            </div>
+            <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)} label="Delete">
+              <div className="task-card card">
+                <div className="purchase-dot">₱</div>
+                <div className="task-main"><div className="task-title">{item.itemName}</div><div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div></div>
+                <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button></div>
+              </div>
+            </SwipeToDelete>
           ))}
         </div>
       </section>

@@ -23,7 +23,7 @@ export type ParsedInput = {
 const futureTask = /\b(i['’]?ll|i will|i['’]?m going to|i am going to|later|remind me|due|i need to|need to)\b/i
 const taskVerb = /\b(pay|finish|submit|call|send|do|complete|clean|study|go to|meet|remember to|remind me)\b/i
 const shoppingVerb = /\b(buy|need to buy|shopping|mabakal|bakal|palit|paliton|palit ko|pangbakal|mupalit|palita|palitan)\b/i
-const purchaseVerb = /\b(i bought|i purchased|bought|purchased|nabakal|nakapalit|nabili|napalit|nabakal ko|nakapalit ko|nabili ko|nakapalit ko)\b/i
+const purchaseVerb = /\b(i bought|i purchased|bought|purchased|nabakal|nakapalit|nabili|napalit|nabakal ko|nakapalit ko|nabili ko)\b/i
 const noteVerb = /\b(note|take note|note down)\b/i
 
 const UNIT_RE = '(?:kg|kilo|kilos|g|gram|grams|pcs?|piece|pieces|tray|trays|lata|can|cans|bottle|bottles|pack|packs|box|boxes|dozen|dozens|liters?|litres?|ml|milliliters?|mL)'
@@ -49,7 +49,6 @@ function wordsToNumber(text: string) {
   const parts = t.split(/\s+/).filter(Boolean)
   if (!parts.length) return null
 
-  // Handle compact English money/quantity phrases such as "two hundred".
   let total = 0
   let current = 0
   let saw = false
@@ -68,8 +67,7 @@ function wordsToNumber(text: string) {
       current += value
     }
   }
-  const result = total + current
-  return saw ? result : null
+  return saw ? total + current : null
 }
 
 function valueFrom(text: string) {
@@ -117,7 +115,7 @@ function parseSegment(segment: string): ParsedLine | null {
   m = s.match(/^(.+?)\s+(.+)$/i)
   if (m) {
     const price = valueFrom(m[2])
-    if (price != null && /(\d|zero|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|isa|duha|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|napulo)/i.test(m[2])) {
+    if (price != null && /(\d|zero|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo)/i.test(m[2])) {
       return { itemName: m[1].trim(), quantity: null, unit: null, price }
     }
   }
@@ -125,36 +123,145 @@ function parseSegment(segment: string): ParsedLine | null {
   return null
 }
 
+// Common household/grocery terms help us distinguish a compact shopping list
+// from terse purchase shorthand when users omit "buy" or "bought".
+const SHOPPING_ITEM_PHRASES = [
+  'dishwashing liquid', 'laundry detergent', 'fabric conditioner', 'cooking oil',
+  'kalamay delata', 'toothpaste', 'toothbrush', 'shampoo', 'conditioner',
+  'habon', 'sabon', 'soap', 'bugas', 'rice', 'itlog', 'egg', 'eggs',
+  'gatas', 'milk', 'tinapay', 'bread', 'sardinas', 'sardines', 'delata',
+  'noodles', 'pansit', 'asukal', 'sugar', 'kape', 'coffee', 'asin', 'salt',
+  'suka', 'vinegar', 'paminta', 'pepper', 'tissue', 'toilet paper',
+  'detergent', 'fabcon', 'toothbrush', 'water', 'tubig', 'snacks', 'biscuits'
+]
+
+const shoppingPhrasePattern = new RegExp(`\\b(${SHOPPING_ITEM_PHRASES.map(escapeRegExp).sort((a, b) => b.length - a.length).join('|')})\\b`, 'gi')
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function findShoppingItemStarts(text: string) {
+  const rawMatches: { index: number; end: number; phrase: string }[] = []
+  for (const match of normalize(text).matchAll(shoppingPhrasePattern)) {
+    const phrase = match[1]
+    const index = match.index ?? -1
+    if (index >= 0 && phrase) rawMatches.push({ index, end: index + phrase.length, phrase })
+  }
+
+  // Prefer the longest phrase when shorter known items overlap it, e.g.
+  // "kalamay delata" should stay one item rather than split into
+  // "kalamay" + "delata".
+  const matches = rawMatches.sort((a, b) => a.index - b.index || b.end - a.end)
+  const starts: { index: number; end: number; phrase: string }[] = []
+  let lastEnd = -1
+  for (const match of matches) {
+    if (match.index < lastEnd) continue
+    starts.push(match)
+    lastEnd = match.end
+  }
+  return starts
+}
+
+function splitRecognizedItemSequence(text: string) {
+  const starts = findShoppingItemStarts(text)
+  if (starts.length < 2) return splitList(text)
+
+  const normalized = normalize(text)
+  return starts.map((start, i) => normalized.slice(start.index, starts[i + 1]?.index ?? normalized.length).trim()).filter(Boolean)
+}
+
+function parseShoppingListSegment(segment: string): ParsedLine | null {
+  let s = segment.trim().replace(/^[-•]+\s*/, '')
+
+  // Explicit expected price: "shampoo 1 for 120" / "rice for 40 pesos".
+  let m = s.match(/^(.+?)\s+(\d+(?:\.\d+)?|[a-z-]+(?:\s+[a-z-]+)*)\s+(.+?)\s+(?:for|at)\s+(?:₱\s*)?(\d+(?:\.\d+)?|[a-z-]+(?:\s+[a-z-]+)*)$/i)
+  if (m) {
+    const price = valueFrom(m[4])
+    const qtyPart = m[2]
+    const unit = canonicalUnit(m[3])
+    const quantity = valueFrom(qtyPart)
+    if (price != null && quantity != null && new RegExp(UNIT_RE, 'i').test(unit)) {
+      return { itemName: m[1].trim(), quantity, unit, price }
+    }
+  }
+
+  // Quantity + unit at the end: "shampoo 1 bottle".
+  m = s.match(new RegExp(`^(.+?)\\s+([\\w .,-]+?)\\s+(${UNIT_RE})$`, 'i'))
+  if (m) {
+    const quantity = valueFrom(m[2])
+    if (quantity != null) return { itemName: m[1].trim(), quantity, unit: canonicalUnit(m[3]), price: null }
+  }
+
+  // Compact shopping lists often use a small bare number as quantity: "shampoo 1".
+  // Keep the tail to a single number word/number so multi-word item names such as
+  // "kalamay delata 3" are not accidentally reduced to just "kalamay".
+  const bareQuantity = '(?:\\d+(?:\\.\\d+)?|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo)'
+  m = s.match(new RegExp(`^(.+?)\\s+(${bareQuantity})$`, 'i'))
+  if (m) {
+    const quantity = valueFrom(m[2])
+    if (quantity != null && quantity >= 0 && quantity <= 20) {
+      return { itemName: m[1].trim(), quantity, unit: null, price: null }
+    }
+  }
+
+  return { itemName: s }
+}
+
+function looksLikeShoppingList(text: string) {
+  const t = normalize(text)
+  if (purchaseVerb.test(t) || /(?:₱|\bphp\b|\bpesos?\b|\bfor\b|\bat\b)\s*\d/i.test(t)) return false
+  const starts = findShoppingItemStarts(text)
+  if (starts.length < 2) return false
+
+  const numbers = Array.from(t.matchAll(/\b\d+(?:\.\d+)?\b/g), m => Number(m[0]))
+  if (numbers.some(n => n >= 20)) return false
+
+  const hasUnit = new RegExp(`\\b${UNIT_RE}\\b`, 'i').test(t)
+  const smallQuantityPattern = /\b(?:one|two|three|four|five|six|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo|\d{1,2})\b/i
+  // Multiple known item names + small quantities and no price marker is much more likely
+  // to be a shopping list than a purchase receipt shorthand.
+  return !hasUnit || smallQuantityPattern.test(t)
+}
+
 export function parseInput(text: string): ParsedInput {
   const raw = text.trim()
   const t = normalize(raw)
 
-  // Explicit intent language wins over numeric shorthand.
   if (futureTask.test(t) || (taskVerb.test(t) && !purchaseVerb.test(t))) {
     const due = extractDueInfo(raw)
     return { intent: 'task', original: raw, title: due.cleanedTitle || raw, dueDate: due.dueDate ?? null, dueTime: due.dueTime ?? null }
   }
 
-  if (purchaseVerb.test(t)) {
-    const withoutLead = stripParticles(raw.replace(/^(?:i\s+)?(?:bought|purchased|nabakal|nakapalit|nabili|napalit)\b\s*(?:ko\s+)?/i, ''))
-    const parts = splitList(withoutLead)
-    const purchases = parts.map(parseSegment).filter(Boolean) as ParsedLine[]
-    if (purchases.length) return { intent: 'purchase', original: raw, purchases }
-  }
-
-  // Terse entries with numbers/units are purchases, even without "bought".
-  const shorthandParts = splitList(raw)
-  const shorthandPurchases = shorthandParts.map(parseSegment).filter(Boolean) as ParsedLine[]
-  if (shorthandPurchases.length === shorthandParts.length && shorthandPurchases.length > 0 && shorthandPurchases.some(p => p.price != null || p.quantity != null)) {
-    return { intent: 'purchase', original: raw, purchases: shorthandPurchases }
-  }
-
+  // Explicit shopping intent always wins over terse price shorthand.
   if (shoppingVerb.test(t)) {
     const withoutVerb = stripParticles(raw.replace(/^(?:i\s+need\s+to\s+|i\s+want\s+to\s+)?(?:buy|mabakal|bakal|palit|paliton|pangbakal|mupalit|palita|palitan)\b/i, '').trim())
     const parts = splitList(withoutVerb)
     const items = parts.map(parseShoppingSegment).filter(Boolean) as ParsedLine[]
     if (items.length) return { intent: 'shopping', original: raw, shopping: items[0], shoppingItems: items }
     return { intent: 'shopping', original: raw, shopping: { itemName: withoutVerb || raw } }
+  }
+
+  // Natural compact shopping lists such as:
+  // "shampoo 1 habon 2 toothpaste kalamay delata 3"
+  if (looksLikeShoppingList(raw)) {
+    const parts = splitRecognizedItemSequence(raw)
+    const items = parts.map(parseShoppingListSegment).filter(Boolean) as ParsedLine[]
+    if (items.length >= 2) return { intent: 'shopping', original: raw, shopping: items[0], shoppingItems: items }
+  }
+
+  if (purchaseVerb.test(t)) {
+    const withoutLead = stripParticles(raw.replace(/^(?:i\s+)?(?:bought|purchased|nabakal|nakapalit|nabili|napalit)\b\s*(?:ko\s+)?/i, ''))
+    const parts = splitRecognizedItemSequence(withoutLead)
+    const purchases = parts.map(parseSegment).filter(Boolean) as ParsedLine[]
+    if (purchases.length) return { intent: 'purchase', original: raw, purchases }
+  }
+
+  // Terse entries with numbers/units are purchases, even without "bought".
+  const shorthandParts = splitRecognizedItemSequence(raw)
+  const shorthandPurchases = shorthandParts.map(parseSegment).filter(Boolean) as ParsedLine[]
+  if (shorthandPurchases.length === shorthandParts.length && shorthandPurchases.length > 0 && shorthandPurchases.some(p => p.price != null || p.quantity != null)) {
+    return { intent: 'purchase', original: raw, purchases: shorthandPurchases }
   }
 
   if (noteVerb.test(t)) return { intent: 'note', original: raw, title: raw }
@@ -202,7 +309,7 @@ export function extractDueInfo(text: string) {
     result.dueDate = localISODate(base)
   }
 
-  const weekdayMatch = lower.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|domingo|lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/i)
+  const weekdayMatch = lower.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|domingo|lunes|martes|miercoles|jueves|viernes|sabado)\b/i)
   if (weekdayMatch && !result.dueDate) {
     const dayNames: Record<string, number> = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, domingo: 0, lunes: 1, martes: 2, miercoles: 3, jueves: 4, viernes: 5, sabado: 6 }
     const wanted = dayNames[weekdayMatch[1].toLowerCase()]
