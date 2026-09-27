@@ -107,10 +107,7 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
   if (blob.size > 25 * 1024 * 1024) throw new Error('The recording is too large. Please keep voice entries short.')
   if (durationMs < 350) throw new Error('The recording is too short.')
 
-  const form = new FormData()
-  const extension = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm'
-  form.append('file', new File([blob], `tandaan-voice.${extension}`, { type: blob.type || 'audio/webm' }))
-  form.append('model', 'whisper-large-v3-turbo')
+  const mimeType = blob.type || 'audio/webm'
 
   const supabaseModule = await import('./supabase')
   const syncModule = await import('./sync')
@@ -134,9 +131,12 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
   try {
     response = await fetch('/api/transcribe', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': mimeType
+      },
       cache: 'no-store',
-      body: form
+      body: blob
     })
   } catch {
     throw new Error('Could not reach Tandaan voice service. Check your internet connection and try again.')

@@ -58,3 +58,7 @@ This build intentionally uses `public/sw.js` instead of `vite-plugin-pwa`/Workbo
 - Voice no longer fails immediately when an anonymous session is missing; it attempts to establish one when online.
 - Task due-date prompts now let Today/Tomorrow flow directly into an optional time picker, with date-only still supported.
 - The PWA build now precaches the exact Vite output assets so a Home Screen install can reopen offline reliably after the first online load.
+
+
+## v21 voice endpoint fix
+The transcription endpoint now accepts raw audio bytes instead of relying on multipart form parsing inside the Vercel Node function, validates the Supabase bearer token server-side, and returns JSON diagnostics for server failures.
