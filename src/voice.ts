@@ -129,6 +129,8 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
   if (!token) throw new Error('Voice needs a Tandaan session. Please open Tandaan online once and try again.')
 
   let response: Response
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), 35_000)
   try {
     response = await fetch('/api/transcribe', {
       method: 'POST',
@@ -137,10 +139,16 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
         'Content-Type': mimeType
       },
       cache: 'no-store',
-      body: blob
+      body: blob,
+      signal: controller.signal
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Voice transcription timed out. Try a shorter recording.')
+    }
     throw new Error('Could not reach Tandaan voice service. Check your internet connection and try again.')
+  } finally {
+    window.clearTimeout(timeoutId)
   }
 
   const contentType = response.headers.get('content-type') || ''

@@ -1,6 +1,10 @@
 {
   "functions": {
-    "api/transcribe.ts": { "maxDuration": 60 },
-    "api/send-due-reminders.ts": { "maxDuration": 60 }
+    "api/transcribe.ts": {
+      "maxDuration": 120
+    },
+    "api/send-due-reminders.ts": {
+      "maxDuration": 60
+    }
   }
 }

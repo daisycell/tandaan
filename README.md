@@ -62,3 +62,7 @@ This build intentionally uses `public/sw.js` instead of `vite-plugin-pwa`/Workbo
 
 ## v21 voice endpoint fix
 The transcription endpoint now accepts raw audio bytes instead of relying on multipart form parsing inside the Vercel Node function, validates the Supabase bearer token server-side, and returns JSON diagnostics for server failures.
+
+
+## Voice latency
+The transcription API uses the official Groq TypeScript SDK with a 20-second upstream timeout and no automatic retries, while Vercel allows the function to run up to 120 seconds. This prevents repeated upstream retries from turning a failed transcription into a long 60-second platform timeout.
