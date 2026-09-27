@@ -1,21 +1,24 @@
-let activeTranscriptionPromise: Promise<string> | null = null
 let worker: Worker | null = null
 let requestId = 0
+let activeTranscription = false
 
-type ModelId = 'tiny-q5_1' | 'base-q5_1'
-type VoiceWorkerMessage =
-  | { id: number; type: 'progress'; progress: number }
-  | { id: number; type: 'result'; result: { ready?: boolean; text?: string } }
-  | { id: number; type: 'error'; error: string }
-
-type PendingRequest = {
-  resolve: (value: VoiceWorkerMessage) => void
+const pending = new Map<number, {
+  resolve: (value: WorkerResponse) => void
   reject: (reason?: unknown) => void
   timer?: number
   onProgress?: (progress: number) => void
+}>()
+
+type WorkerResponse = {
+  id: number
+  type: 'progress' | 'ready' | 'result' | 'error'
+  progress?: number
+  cached?: boolean
+  text?: string
+  error?: string
 }
 
-const pending = new Map<number, PendingRequest>()
+type ModelId = 'Xenova/whisper-tiny' | 'Xenova/whisper-base'
 
 export type VoiceCaptureResult = { blob: Blob; durationMs: number }
 export type VoiceRecorder = {
@@ -23,53 +26,36 @@ export type VoiceRecorder = {
   cancel: () => void
   finished: Promise<VoiceCaptureResult>
 }
-export type VoicePhaseCallback = (phase: 'starting' | 'local' | 'online-fallback') => void
-
-type PreparedModel = ModelId
-
-function preferredMimeType() {
-  const types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
-  return types.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) || ''
-}
-
-function extensionForMime(mime: string) {
-  if (mime.includes('mp4')) return 'm4a'
-  if (mime.includes('ogg')) return 'ogg'
-  return 'webm'
-}
+export type VoicePhase = 'checking-model' | 'loading-model' | 'recording' | 'transcribing' | 'ready'
+export type VoicePhaseCallback = (phase: VoicePhase) => void
+export type ProgressCallback = (progress: number) => void
 
 function isMobileDevice() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 }
 
-function chooseModelId(): PreparedModel {
-  return isMobileDevice() ? 'tiny-q5_1' : 'base-q5_1'
-}
-
-function modelCacheKey(modelId = chooseModelId()) {
-  return `tandaan-voice-model-cached-${modelId}`
+function chooseModelId(): ModelId {
+  return isMobileDevice() ? 'Xenova/whisper-tiny' : 'Xenova/whisper-base'
 }
 
 function createWorker() {
   if (worker) return worker
   worker = new Worker(new URL('./voiceWorker.ts', import.meta.url), { type: 'module' })
-
   worker.onmessage = event => {
-    const message = event.data as VoiceWorkerMessage
+    const message = event.data as WorkerResponse
     const request = pending.get(message.id)
     if (!request) return
     if (message.type === 'progress') {
-      request.onProgress?.(message.progress)
+      request.onProgress?.(message.progress ?? 0)
       return
     }
     if (request.timer) window.clearTimeout(request.timer)
     pending.delete(message.id)
-    if (message.type === 'error') request.reject(new Error(message.error))
+    if (message.type === 'error') request.reject(new Error(message.error || 'Voice engine error.'))
     else request.resolve(message)
   }
-
   worker.onerror = event => {
-    const error = new Error(event.message || 'The local voice worker stopped unexpectedly.')
+    const error = new Error(event.message || 'Voice engine stopped unexpectedly.')
     for (const [id, request] of pending) {
       if (request.timer) window.clearTimeout(request.timer)
       request.reject(error)
@@ -78,7 +64,6 @@ function createWorker() {
     worker?.terminate()
     worker = null
   }
-
   return worker
 }
 
@@ -87,62 +72,61 @@ function resetWorker() {
   worker = null
   for (const [id, request] of pending) {
     if (request.timer) window.clearTimeout(request.timer)
-    request.reject(new Error('The local voice engine was restarted.'))
+    request.reject(new Error('Voice engine reset.'))
     pending.delete(id)
   }
 }
 
-function requestWorker(type: 'prepare' | 'transcribe', modelId: ModelId, audioData?: Float32Array, onProgress?: (progress: number) => void, timeoutMs?: number) {
+function requestWorker(
+  type: 'prepare' | 'transcribe',
+  modelId: ModelId,
+  payload?: Float32Array,
+  opts?: { onProgress?: (progress: number) => void; timeoutMs?: number; online?: boolean },
+) {
   const id = ++requestId
-  const requestPromise = new Promise<VoiceWorkerMessage>((resolve, reject) => {
-    const request: PendingRequest = { resolve, reject, onProgress }
-    if (timeoutMs) {
+  return new Promise<WorkerResponse>((resolve, reject) => {
+    const request = { resolve, reject, onProgress: opts?.onProgress, timer: undefined as number | undefined }
+    if (opts?.timeoutMs) {
       request.timer = window.setTimeout(() => {
         pending.delete(id)
         resetWorker()
         reject(new Error('Local voice transcription timed out.'))
-      }, timeoutMs)
+      }, opts.timeoutMs)
     }
     pending.set(id, request)
     try {
-      createWorker().postMessage({ id, type, modelId, audioData }, audioData ? [audioData.buffer] : [])
+      const message = type === 'prepare'
+        ? { id, type, modelId, online: opts?.online !== false }
+        : { id, type, modelId, audio: payload }
+      createWorker().postMessage(message, payload ? [payload.buffer] : [])
     } catch (error) {
       pending.delete(id)
       if (request.timer) window.clearTimeout(request.timer)
       reject(error)
     }
   })
-  return requestPromise
 }
 
-export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 15_000): Promise<VoiceRecorder> {
+function preferredMimeType() {
+  const types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
+  return types.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) || ''
+}
+
+export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 12_000): Promise<VoiceRecorder> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-    throw new Error('Microphone recording is not supported by this browser.')
+    throw new Error('Microphone recording is not supported on this device.')
   }
 
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true, channelCount: 1 },
   })
-
-  const ctx = new AudioContext()
-  const source = ctx.createMediaStreamSource(stream)
-  const analyser = ctx.createAnalyser()
-  analyser.fftSize = 512
-  source.connect(analyser)
-  const data = new Uint8Array(analyser.fftSize)
   const mimeType = preferredMimeType()
   const recorder = new MediaRecorder(stream, mimeType ? { mimeType, bitsPerSecond: 24_000 } : undefined)
   const chunks: Blob[] = []
   const startedAt = performance.now()
-  let animation = 0
   let settled = false
-  let speechStarted = false
-  let silenceStartedAt = 0
   let timer = 0
-
-  const silenceThreshold = 0.045
-  const silenceDurationMs = 750
-
+  let levelTimer = 0
   let resolveFinished!: (value: VoiceCaptureResult) => void
   let rejectFinished!: (reason?: unknown) => void
   const finished = new Promise<VoiceCaptureResult>((resolve, reject) => {
@@ -150,206 +134,158 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
     rejectFinished = reject
   })
 
-  const cleanup = async () => {
-    cancelAnimationFrame(animation)
-    clearTimeout(timer)
-    source.disconnect()
-    analyser.disconnect()
+  // Capture itself intentionally uses MediaRecorder only. We don't create an AudioContext
+  // during recording, reducing standalone-PWA audio lifecycle problems on iOS.
+  const cleanup = () => {
+    window.clearTimeout(timer)
+    window.clearInterval(levelTimer)
     stream.getTracks().forEach(track => track.stop())
-    await ctx.close().catch(() => undefined)
     onLevel?.(0)
   }
 
-  const finalizeStop = () => {
+  const finish = () => {
     if (settled) return finished
     settled = true
-    clearTimeout(timer)
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' })
-      const result = { blob, durationMs: Math.round(performance.now() - startedAt) }
-      void cleanup().then(() => resolveFinished(result))
+      cleanup()
+      resolveFinished({ blob, durationMs: Math.round(performance.now() - startedAt) })
     }
     recorder.onerror = () => {
-      void cleanup().then(() => rejectFinished(new Error('Recording failed.')))
+      cleanup()
+      rejectFinished(new Error('Microphone recording failed.'))
     }
     try {
       recorder.stop()
     } catch {
-      void cleanup().then(() => rejectFinished(new Error('Recording could not be stopped.')))
+      cleanup()
+      rejectFinished(new Error('Microphone recording could not be stopped.'))
     }
     return finished
   }
 
-  const stop = () => finalizeStop()
-
-  const cancel = () => {
+  const cancel = (message = 'Recording was interrupted.') => {
     if (settled) return
     settled = true
-    clearTimeout(timer)
-    recorder.onstop = () => { void cleanup() }
-    try { recorder.stop() } catch { void cleanup() }
+    window.clearTimeout(timer)
+    recorder.onstop = cleanup
+    try { recorder.stop() } catch { cleanup() }
+    rejectFinished(new Error(message))
   }
 
-  const updateLevel = () => {
-    if (settled) return
-    analyser.getByteTimeDomainData(data)
-    let sum = 0
-    for (let i = 0; i < data.length; i += 1) {
-      const v = (data[i] - 128) / 128
-      sum += v * v
-    }
-    const rms = Math.sqrt(sum / data.length)
-    onLevel?.(Math.min(1, rms * 4))
-    if (rms > silenceThreshold) {
-      speechStarted = true
-      silenceStartedAt = 0
-    } else if (speechStarted && !silenceStartedAt) {
-      silenceStartedAt = performance.now()
-    } else if (speechStarted && silenceStartedAt && performance.now() - silenceStartedAt >= silenceDurationMs) {
-      void finalizeStop()
-      return
-    }
-    animation = requestAnimationFrame(updateLevel)
+  const visibilityHandler = () => {
+    if (document.visibilityState !== 'visible') cancel('Recording was interrupted because Tandaan left the foreground.')
   }
+  const pageHideHandler = () => cancel('Recording was interrupted because Tandaan was backgrounded.')
+  document.addEventListener('visibilitychange', visibilityHandler)
+  window.addEventListener('pagehide', pageHideHandler)
 
   recorder.ondataavailable = event => {
     if (event.data.size > 0) chunks.push(event.data)
   }
 
-  recorder.start(200)
-  updateLevel()
-  timer = window.setTimeout(() => { void finalizeStop() }, maxDurationMs)
+  recorder.start(250)
+  timer = window.setTimeout(() => { void finish() }, maxDurationMs)
+  // Keep the visual meter alive without touching the recorded audio path.
+  levelTimer = window.setInterval(() => onLevel?.(0.18), 120)
 
-  return { stop, cancel, finished }
+  finished.finally(() => {
+    document.removeEventListener('visibilitychange', visibilityHandler)
+    window.removeEventListener('pagehide', pageHideHandler)
+  }).catch(() => undefined)
+
+  return { stop: finish, cancel: () => cancel(), finished }
 }
 
-function trimSilence(audioData: Float32Array) {
-  if (audioData.length < 16_000) return audioData
-  const frameSize = 320
-  const threshold = 0.008
+async function decodeTo16kMono(blob: Blob) {
+  if (typeof AudioContext === 'undefined') throw new Error('This browser cannot decode recorded audio for local transcription.')
+  const context = new AudioContext()
+  try {
+    const buffer = await context.decodeAudioData(await blob.arrayBuffer())
+    const mono = new Float32Array(buffer.length)
+    const channels = buffer.numberOfChannels
+    for (let ch = 0; ch < channels; ch += 1) {
+      const data = buffer.getChannelData(ch)
+      for (let i = 0; i < data.length; i += 1) mono[i] += data[i] / channels
+    }
+    const targetRate = 16_000
+    const targetLength = Math.max(1, Math.round(mono.length * targetRate / buffer.sampleRate))
+    const out = new Float32Array(targetLength)
+    const ratio = buffer.sampleRate / targetRate
+    for (let i = 0; i < targetLength; i += 1) {
+      const sourceIndex = i * ratio
+      const left = Math.floor(sourceIndex)
+      const right = Math.min(mono.length - 1, left + 1)
+      const mix = sourceIndex - left
+      out[i] = mono[Math.min(mono.length - 1, left)] * (1 - mix) + mono[right] * mix
+    }
+    return trimSilence(out)
+  } finally {
+    await context.close().catch(() => undefined)
+  }
+}
+
+function trimSilence(audio: Float32Array) {
+  if (audio.length < 2_000) return audio
+  const frame = 320
+  const threshold = 0.01
   let first = 0
-  let last = audioData.length
+  let last = audio.length
   let found = false
-
-  for (let start = 0; start < audioData.length; start += frameSize) {
-    const end = Math.min(audioData.length, start + frameSize)
+  for (let i = 0; i < audio.length; i += frame) {
+    const end = Math.min(audio.length, i + frame)
     let sum = 0
-    for (let i = start; i < end; i += 1) sum += audioData[i] * audioData[i]
-    const rms = Math.sqrt(sum / Math.max(1, end - start))
-    if (rms >= threshold) {
-      first = start
-      found = true
-      break
-    }
+    for (let j = i; j < end; j += 1) sum += audio[j] * audio[j]
+    if (Math.sqrt(sum / Math.max(1, end - i)) >= threshold) { first = i; found = true; break }
   }
-
-  if (!found) return audioData
-
-  for (let end = audioData.length; end > 0; end -= frameSize) {
-    const start = Math.max(0, end - frameSize)
+  if (!found) return audio
+  for (let end = audio.length; end > 0; end -= frame) {
+    const start = Math.max(0, end - frame)
     let sum = 0
-    for (let i = start; i < end; i += 1) sum += audioData[i] * audioData[i]
-    const rms = Math.sqrt(sum / Math.max(1, end - start))
-    if (rms >= threshold) {
-      last = end
-      break
-    }
+    for (let j = start; j < end; j += 1) sum += audio[j] * audio[j]
+    if (Math.sqrt(sum / Math.max(1, end - start)) >= threshold) { last = end; break }
   }
-
-  const pad = Math.round(16_000 * 0.06)
-  const from = Math.max(0, first - pad)
-  const to = Math.min(audioData.length, last + pad)
-  if (to - from < 8_000) return audioData
-  return audioData.slice(from, to)
-}
-
-async function transcribeOnline(blob: Blob) {
-  const { supabase } = await import('./supabase')
-  if (!supabase) throw new Error('Supabase is not configured for online voice fallback.')
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token
-  if (!token) throw new Error('No online Tandaan session is available for voice fallback.')
-
-  const response = await fetch('/api/transcribe', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': blob.type || 'application/octet-stream',
-      'X-Voice-Filename': `tandaan-voice.${extensionForMime(blob.type || 'audio/webm')}`,
-    },
-    body: blob,
-  })
-
-  const body = await response.json().catch(() => ({})) as { text?: string; error?: string }
-  if (!response.ok) throw new Error(body.error || `Online transcription failed (${response.status}).`)
-  if (!body.text?.trim()) throw new Error('The online transcription returned no speech.')
-  return body.text.trim()
+  const pad = 1_600
+  return audio.slice(Math.max(0, first - pad), Math.min(audio.length, last + pad))
 }
 
 export async function prepareVoice(onProgress?: ProgressCallback) {
   const modelId = chooseModelId()
-  const cachedKey = modelCacheKey(modelId)
-  let cached = false
-  try { cached = localStorage.getItem(cachedKey) === '1' } catch { /* best effort */ }
-
-  const message = await requestWorker('prepare', modelId, undefined, progress => {
-    if (!cached) onProgress?.(progress)
+  const online = navigator.onLine !== false
+  const result = await requestWorker('prepare', modelId, undefined, {
+    online,
+    timeoutMs: online ? 120_000 : 30_000,
+    onProgress,
   })
-
-  if (message.type !== 'result') throw new Error('Voice engine did not finish initializing.')
-  try { localStorage.setItem(cachedKey, '1') } catch { /* best effort */ }
+  if (result.type !== 'ready') throw new Error('Voice model did not finish loading.')
+  return { modelId, cached: Boolean(result.cached) }
 }
 
-type ProgressCallback = (progress: number) => void
+export async function transcribeVoice(blob: Blob, durationMs: number) {
+  if (activeTranscription) throw new Error('Voice is already transcribing. Please wait for it to finish.')
+  if (durationMs < 450) throw new Error('The recording is too short. Try speaking for 2–6 seconds.')
+  if (durationMs > 12_500) throw new Error('Recording was too long. Try a shorter command.')
+  if (!blob.size) throw new Error('The microphone recording was empty.')
 
-export async function transcribeVoice(blob: Blob, durationMs: number, onProgress?: ProgressCallback, onPhase?: VoicePhaseCallback) {
-  if (durationMs < 450) throw new Error('The recording is too short.')
-  if (typeof window === 'undefined' || typeof AudioContext === 'undefined') throw new Error('Offline voice is not supported in this environment.')
-  if (!blob.size) throw new Error('The microphone recording was empty. Please try again.')
-  if (durationMs > 16_000) throw new Error('Recording is too long. Try a shorter voice command.')
-  if (activeTranscriptionPromise) throw new Error('A previous voice transcription is still finishing. Please wait a moment and try again.')
-
-  activeTranscriptionPromise = (async () => {
-    const { convertFromFile } = await import('@timur00kh/whisper.wasm')
-    const mime = blob.type || 'audio/webm'
-    const ext = extensionForMime(mime)
-    const file = new File([blob], `tandaan-voice.${ext}`, { type: mime })
-
-    let audioData: Float32Array
-    try {
-      const conversion = await convertFromFile(file, { normalize: true })
-      audioData = trimSilence(conversion.audioData)
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Audio conversion failed.'
-      throw new Error(`Could not prepare the recording for offline transcription: ${detail}`)
-    }
-
+  activeTranscription = true
+  try {
+    const audio = await decodeTo16kMono(blob)
     const modelId = chooseModelId()
-    try {
-      onPhase?.('local')
-      const result = await requestWorker('transcribe', modelId, audioData, undefined, 20_000)
-      if (result.type !== 'result' || !result.result.text) throw new Error('The local voice engine returned no transcript.')
-      return result.result.text
-    } catch (localError) {
-      resetWorker()
-      if (navigator.onLine) {
-        onPhase?.('online-fallback')
-        try {
-          return await transcribeOnline(blob)
-        } catch (onlineError) {
-          const localMessage = localError instanceof Error ? localError.message : 'Local transcription failed.'
-          const onlineMessage = onlineError instanceof Error ? onlineError.message : 'Online transcription failed.'
-          throw new Error(`${localMessage} Online backup also failed: ${onlineMessage}`)
-        }
-      }
-      const detail = localError instanceof Error ? localError.message : 'Local voice transcription failed.'
-      throw new Error(`${detail} Voice remains available offline, but this recording could not be processed.`)
-    } finally {
-      audioData = new Float32Array(0)
-    }
-  })().finally(() => {
-    activeTranscriptionPromise = null
-  })
+    const result = await requestWorker('transcribe', modelId, audio, { timeoutMs: 45_000 })
+    if (result.type !== 'result' || !result.text) throw new Error(result.error || 'Local voice transcription returned no text.')
+    return result.text
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Local voice transcription failed.'
+    // A failed/aborted worker is not reused. The next attempt gets a new worker and
+    // reloads the cached model rather than inheriting corrupted WASM state.
+    resetWorker()
+    throw new Error(message)
+  } finally {
+    activeTranscription = false
+  }
+}
 
-  return activeTranscriptionPromise
+export function cancelVoiceEngine() {
+  resetWorker()
+  activeTranscription = false
 }

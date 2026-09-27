@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Mic, Pencil, Plus, Settings, ShoppingCart, Sparkles, Square, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
 import { db, getLocalName, getLocalTheme, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeCustomizations } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
-import { parseInput, type ParsedInput } from './parser'
+import { parseInput, type ParsedInput, type ParsedLine } from './parser'
 import { supabase } from './supabase'
 import { getRemoteProfile, getUserId, syncAll, syncProfile } from './sync'
 import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
-import { prepareVoice, startVoiceCapture, transcribeVoice, type VoiceRecorder } from './voice'
+import { prepareVoice, startVoiceCapture, transcribeVoice, cancelVoiceEngine, type VoiceRecorder } from './voice'
 import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
 import { DEFAULT_THEME, STICKERS, THEME_OPTIONS, isThemeId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
@@ -125,6 +125,8 @@ export default function App() {
   const [draftCustomizations, setDraftCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
   const [displayThemeStickers, setDisplayThemeStickers] = useState<string[]>(() => STICKERS[DEFAULT_THEME].slice(0, 3))
   const [ambiguousInput, setAmbiguousInput] = useState<ParsedInput | null>(null)
+  const [ambiguityEditMode, setAmbiguityEditMode] = useState<'shopping' | 'purchase' | null>(null)
+  const [ambiguityDraftLines, setAmbiguityDraftLines] = useState<ParsedLine[]>([])
 
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
@@ -149,7 +151,7 @@ export default function App() {
   const [editPurchaseUnit, setEditPurchaseUnit] = useState('')
   const [editPurchasePrice, setEditPurchasePrice] = useState('')
 
-  const [voiceState, setVoiceState] = useState<'idle' | 'preparing' | 'recording' | 'transcribing'>('idle')
+  const [voiceState, setVoiceState] = useState<'idle' | 'checking-model' | 'loading-model' | 'recording' | 'transcribing'>('idle')
   const [voiceLevel, setVoiceLevel] = useState(0)
   const [voiceSeconds, setVoiceSeconds] = useState(0)
   const [voiceProgress, setVoiceProgress] = useState<number | null>(null)
@@ -565,10 +567,7 @@ export default function App() {
     setVoiceProgress(null)
     setStatus('Transcribing on this device…')
     try {
-      const transcript = await transcribeVoice(result.blob, result.durationMs, undefined, phase => {
-        if (phase === 'online-fallback') setStatus('Local voice had trouble · trying online backup…')
-        else setStatus('Transcribing on this device…')
-      })
+      const transcript = await transcribeVoice(result.blob, result.durationMs)
       setVoiceTranscript(transcript)
       setInput(transcript)
       setVoiceReview(parseInput(transcript))
@@ -589,7 +588,7 @@ export default function App() {
     setVoiceTranscript('')
     setVoiceSeconds(0)
 
-    if (voiceState === 'preparing' || voiceState === 'transcribing') return
+    if (voiceState === 'checking-model' || voiceState === 'loading-model' || voiceState === 'transcribing') return
 
     if (voiceState === 'recording') {
       const recorder = recorderRef.current
@@ -603,17 +602,21 @@ export default function App() {
     }
 
     try {
-      setVoiceState('preparing')
-      setStatus('Starting voice on this device…')
-      await prepareVoice(progress => {
+      setVoiceState('checking-model')
+      setStatus('Checking voice on this device…')
+      const preparation = await prepareVoice(progress => {
+        setVoiceState('loading-model')
         setVoiceProgress(progress)
-        setStatus(`Downloading voice model… ${progress}%`)
+        setStatus(`Loading voice model… ${progress}%`)
       })
+      if (preparation.cached) setStatus('Voice model ready on this device')
+      else setStatus('Voice model ready · cached on this device')
       setVoiceProgress(null)
+
       const recorder = await startVoiceCapture(level => setVoiceLevel(level), 12_000)
       recorderRef.current = recorder
       setVoiceState('recording')
-      setStatus('Listening… pause when you finish')
+      setStatus('Listening… tap Stop when you finish')
       void recorder.finished
         .then(result => transcribeCaptured(result))
         .catch(error => {
@@ -623,8 +626,11 @@ export default function App() {
           recorderRef.current = null
         })
     } catch (error) {
-      setVoiceError(error instanceof Error ? error.message : 'Could not access the microphone.')
+      cancelVoiceEngine()
+      setVoiceError(error instanceof Error ? error.message : 'Could not start voice on this device.')
       setVoiceState('idle')
+      setVoiceLevel(0)
+      recorderRef.current = null
     }
   }
 
@@ -643,6 +649,49 @@ export default function App() {
     if (!ambiguousInput) return
     await saveParsed(ambiguousInput, intent)
     setAmbiguousInput(null)
+    setAmbiguityEditMode(null)
+    setAmbiguityDraftLines([])
+  }
+
+  function beginAmbiguityEdit(intent: 'shopping' | 'purchase') {
+    if (!ambiguousInput) return
+    const source = intent === 'shopping'
+      ? (ambiguousInput.shoppingItems?.length ? ambiguousInput.shoppingItems : ambiguousInput.shopping ? [ambiguousInput.shopping] : [])
+      : (ambiguousInput.purchases ?? [])
+    setAmbiguityEditMode(intent)
+    setAmbiguityDraftLines(source.map(line => ({ ...line })))
+  }
+
+  function updateAmbiguityLine(index: number, patch: Partial<ParsedLine>) {
+    setAmbiguityDraftLines(lines => lines.map((line, i) => i === index ? { ...line, ...patch } : line))
+  }
+
+  function addAmbiguityLine() {
+    setAmbiguityDraftLines(lines => [...lines, { itemName: '', quantity: 1, unit: 'pcs', price: null }])
+  }
+
+  function removeAmbiguityLine(index: number) {
+    setAmbiguityDraftLines(lines => lines.filter((_, i) => i !== index))
+  }
+
+  async function saveAmbiguityEdits() {
+    if (!ambiguousInput || !ambiguityEditMode) return
+    const cleaned = ambiguityDraftLines
+      .map(line => ({
+        ...line,
+        itemName: line.itemName.trim(),
+        quantity: line.quantity == null || Number.isNaN(Number(line.quantity)) ? null : Number(line.quantity),
+        unit: line.unit?.trim() || null,
+        price: ambiguityEditMode === 'purchase' && line.price != null && !Number.isNaN(Number(line.price)) ? Number(line.price) : null,
+      }))
+    if (!cleaned.length || cleaned.some(line => !line.itemName)) return
+    const edited: ParsedInput = ambiguityEditMode === 'shopping'
+      ? { ...ambiguousInput, intent: 'shopping', shoppingItems: cleaned, shopping: cleaned[0], ambiguous: undefined }
+      : { ...ambiguousInput, intent: 'purchase', purchases: cleaned, ambiguous: undefined }
+    await saveParsed(edited, ambiguityEditMode)
+    setAmbiguousInput(null)
+    setAmbiguityEditMode(null)
+    setAmbiguityDraftLines([])
   }
 
   if (!profileReady) return <div className="boot">Loading Tandaan…</div>
@@ -663,7 +712,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-row"><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
+        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={20} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
         <div className="header-actions">
           <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => void ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
           <button className="icon-btn" onClick={openSettings} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
@@ -686,9 +735,9 @@ export default function App() {
           <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addFromText() }} placeholder="Try: Pay electricity tomorrow at 6 PM" />
           <button className="primary add-btn" onClick={() => void addFromText()}><Plus size={18} /> Add</button>
         </div>
-        <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' || voiceState === 'preparing' ? 'voice-btn transcribing' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing' || voiceState === 'preparing'}>
+        <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model' ? 'voice-btn transcribing' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model'}>
           {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'preparing' ? (voiceProgress != null ? `Downloading voice · ${voiceProgress}%` : 'Starting voice…') : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
+          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'checking-model' ? 'Checking voice…' : voiceState === 'loading-model' ? (voiceProgress != null ? `Loading voice · ${voiceProgress}%` : 'Loading voice…') : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
         {voiceError && <div className="inline-error">{voiceError}</div>}
@@ -739,7 +788,7 @@ export default function App() {
         <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
         <div className="purchase-total card"><div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small></div>
         <div className="task-list">
-          {purchases.map(item => (
+          {purchases.length > 0 && purchases.map(item => (
             <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
               <div className="task-card card">
                 <div className="purchase-dot">₱</div>
@@ -754,15 +803,43 @@ export default function App() {
       {ambiguousInput && (
         <div className="modal-backdrop">
           <div className="modal card ambiguity-modal">
-            <div className="modal-header"><div><strong>What did you mean?</strong><div className="modal-subtitle">{ambiguousInput.ambiguous?.reason}</div></div><button className="icon-btn" onClick={() => setAmbiguousInput(null)} aria-label="Close"><X /></button></div>
-            <div className="review-block">
-              <div className="review-label">Shortcut input</div>
-              <div className="ambiguity-text">{ambiguousInput.original}</div>
-              <div className="review-row ambiguity-preview"><span>Shopping interpretation</span><span>{(ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ')}</span></div>
-              <div className="review-row ambiguity-preview"><span>Purchase interpretation</span><span>{(ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ')}</span></div>
+            <div className="modal-header">
+              <div><strong>{ambiguityEditMode ? `Edit ${ambiguityEditMode === 'shopping' ? 'shopping list' : 'purchase list'}` : 'What did you mean?'}</strong><div className="modal-subtitle">{ambiguityEditMode ? 'Review each item before saving.' : ambiguousInput.ambiguous?.reason}</div></div>
+              <button className="icon-btn" onClick={() => { setAmbiguousInput(null); setAmbiguityEditMode(null); setAmbiguityDraftLines([]) }} aria-label="Close"><X /></button>
             </div>
-            <div className="modal-actions ambiguity-actions"><button className="secondary" onClick={() => void chooseAmbiguousIntent('shopping')}>🛒 Shopping list</button><button className="primary" onClick={() => void chooseAmbiguousIntent('purchase')}>✓ Purchase</button></div>
-            <button className="text-btn" onClick={() => setAmbiguousInput(null)}>Cancel</button>
+
+            {!ambiguityEditMode ? (
+              <>
+                <div className="review-block">
+                  <div className="review-label">Shortcut input</div>
+                  <div className="ambiguity-text">{ambiguousInput.original}</div>
+                  <div className="review-row ambiguity-preview"><span>Shopping list</span><span>{(ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ')}</span></div>
+                  <div className="row-action"><button className="text-btn" onClick={() => beginAmbiguityEdit('shopping')}>Edit list</button></div>
+                  <div className="review-row ambiguity-preview"><span>Purchase</span><span>{(ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ')}</span></div>
+                  <div className="row-action"><button className="text-btn" onClick={() => beginAmbiguityEdit('purchase')}>Edit purchase</button></div>
+                </div>
+                <div className="modal-actions ambiguity-actions"><button className="secondary" onClick={() => void chooseAmbiguousIntent('shopping')}>Shopping list</button><button className="primary" onClick={() => void chooseAmbiguousIntent('purchase')}>Purchase</button></div>
+                <div className="modal-actions ambiguity-secondary-actions"><button className="text-btn" onClick={() => { setInput(ambiguousInput.original); setAmbiguousInput(null) }}>Edit original text</button><button className="text-btn" onClick={() => setAmbiguousInput(null)}>Cancel</button></div>
+              </>
+            ) : (
+              <>
+                <div className="structured-editor-list">
+                  {ambiguityDraftLines.map((line, index) => (
+                    <div className="structured-editor-row" key={`${index}-${line.itemName}`}>
+                      <div className="structured-editor-fields">
+                        <input aria-label="Item name" placeholder="Item name" value={line.itemName} onChange={e => updateAmbiguityLine(index, { itemName: e.target.value })} />
+                        <input aria-label="Quantity" type="number" min="0" step="0.001" value={line.quantity ?? ''} onChange={e => updateAmbiguityLine(index, { quantity: e.target.value === '' ? null : Number(e.target.value) })} />
+                        <input aria-label="Unit" value={line.unit ?? ''} onChange={e => updateAmbiguityLine(index, { unit: e.target.value })} placeholder="pcs" />
+                        {ambiguityEditMode === 'purchase' && <input aria-label="Price" type="number" min="0" step="0.01" value={line.price ?? ''} onChange={e => updateAmbiguityLine(index, { price: e.target.value === '' ? null : Number(e.target.value) })} placeholder="Price" />}
+                      </div>
+                      <button className="icon-btn danger-icon" onClick={() => removeAmbiguityLine(index)} aria-label={`Remove item ${index + 1}`}><X size={16} /></button>
+                    </div>
+                  ))}
+                </div>
+                <button className="secondary add-item-btn" onClick={addAmbiguityLine}><Plus size={16} /> Add item</button>
+                <div className="modal-actions"><button className="secondary" onClick={() => { setAmbiguityEditMode(null); setAmbiguityDraftLines([]) }}>Back</button><button className="primary" disabled={!ambiguityDraftLines.length || ambiguityDraftLines.some(line => !line.itemName.trim())} onClick={() => void saveAmbiguityEdits()}>Save list</button></div>
+              </>
+            )}
           </div>
         </div>
       )}

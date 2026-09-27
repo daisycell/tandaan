@@ -1,74 +1,112 @@
-import { ModelManager, WhisperWasmService } from '@timur00kh/whisper.wasm'
+import { env, pipeline } from '@huggingface/transformers'
 
-let service: WhisperWasmService | null = null
-let modelManager: ModelManager | null = null
-let initializedModel: string | null = null
+env.useBrowserCache = true
+env.allowRemoteModels = true
+env.allowLocalModels = false
 
-function getModelManager() {
-  if (!modelManager) modelManager = new ModelManager({ logLevel: 0 })
-  return modelManager
+type WorkerModel = 'Xenova/whisper-tiny' | 'Xenova/whisper-base'
+
+type WorkerMessage =
+  | { id: number; type: 'prepare'; modelId: WorkerModel; online: boolean }
+  | { id: number; type: 'transcribe'; modelId: WorkerModel; audio: Float32Array }
+  | { id: number; type: 'reset' }
+
+type WorkerResult = {
+  id: number
+  type: 'progress' | 'ready' | 'result' | 'error'
+  progress?: number
+  cached?: boolean
+  text?: string
+  error?: string
 }
 
-async function prepare(modelId: 'tiny-q5_1' | 'base-q5_1', onProgress?: (progress: number) => void) {
-  if (service && initializedModel === modelId) {
-    onProgress?.(100)
-    return
+let transcriber: any = null
+let currentModel: WorkerModel | null = null
+let loadingPromise: Promise<any> | null = null
+
+const scope = self as unknown as {
+  postMessage: (message: WorkerResult) => void
+  onmessage: ((event: MessageEvent<WorkerMessage>) => void) | null
+}
+
+function post(message: WorkerResult) {
+  scope.postMessage(message)
+}
+
+async function loadModel(modelId: WorkerModel, online: boolean, requestId: number) {
+  if (transcriber && currentModel === modelId) return { cached: true }
+  if (loadingPromise && currentModel === modelId) {
+    await loadingPromise
+    return { cached: true }
   }
 
-  service = new WhisperWasmService({ logLevel: 0 })
-  const supported = await service.checkWasmSupport()
-  if (!supported) throw new Error('This browser does not support offline voice WebAssembly.')
-
-  const model = await getModelManager().loadModel(modelId, true, progress => onProgress?.(progress))
-  await service.initModel(model)
-  initializedModel = modelId
-  onProgress?.(100)
-}
-
-const workerScope = self as unknown as {
-  postMessage: (message: unknown) => void
-  onmessage: ((event: MessageEvent) => void) | null
-}
-
-workerScope.onmessage = async (event: MessageEvent) => {
-  const message = event.data as {
-    id: number
-    type: 'prepare' | 'transcribe'
-    modelId: 'tiny-q5_1' | 'base-q5_1'
-    audioData?: Float32Array
+  if (!online) {
+    // The pipeline performs the authoritative offline cache check. If the model is
+    // missing or incomplete, it throws and we surface that instead of guessing from
+    // a cache directory entry.
   }
 
+  const createOptions: Record<string, unknown> = {
+    dtype: 'q8',
+    device: 'wasm',
+    progress_callback: (info: any) => {
+      if (info?.status === 'progress' && typeof info.progress === 'number') {
+        post({ id: requestId, type: 'progress', progress: Math.max(0, Math.min(100, Math.round(info.progress))) })
+      }
+    },
+  }
+  if (!online) createOptions.local_files_only = true
+
+  loadingPromise = pipeline('automatic-speech-recognition', modelId, createOptions)
   try {
-    if (message.type === 'prepare') {
-      await prepare(message.modelId, progress => workerScope.postMessage({ id: message.id, type: 'progress', progress }))
-      workerScope.postMessage({ id: message.id, type: 'result', result: { ready: true } })
+    transcriber = await loadingPromise
+    currentModel = modelId
+    post({ id: requestId, type: 'progress', progress: 100 })
+    return { cached: false }
+  } catch (error) {
+    transcriber = null
+    currentModel = null
+    throw error
+  } finally {
+    loadingPromise = null
+  }
+}
+
+scope.onmessage = async event => {
+  const message = event.data
+  try {
+    if (message.type === 'reset') {
+      transcriber = null
+      currentModel = null
+      loadingPromise = null
       return
     }
 
-    await prepare(message.modelId)
-    if (!service || !message.audioData) throw new Error('Voice engine is not ready.')
+    if (message.type === 'prepare') {
+      const result = await loadModel(message.modelId, message.online, message.id)
+      post({ id: message.id, type: 'ready', cached: result.cached })
+      return
+    }
 
-    const result = await service.transcribe(message.audioData, undefined, {
-      language: 'auto',
-      threads: 1,
-      translate: false,
+    if (!message.audio?.length) throw new Error('The recorded audio was empty.')
+    await loadModel(message.modelId, navigator.onLine !== false, message.id)
+    if (!transcriber) throw new Error('Voice engine is not ready.')
+
+    const output = await transcriber(message.audio, {
+      task: 'transcribe',
+      return_timestamps: false,
+      language: undefined,
+      chunk_length_s: 15,
     })
 
-    const text = result.segments
-      .map(segment => segment.text.trim())
-      .filter(Boolean)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    if (!text) throw new Error('No speech was recognized. Try speaking clearly for a little longer.')
-    workerScope.postMessage({ id: message.id, type: 'result', result: { text } })
+    const text = String(output?.text ?? '').replace(/\s+/g, ' ').trim()
+    if (!text) throw new Error('No speech was recognized. Try a short, clear command.')
+    post({ id: message.id, type: 'result', text })
   } catch (error) {
-    const detail = error instanceof Error ? error.message : 'Unknown voice engine error.'
-    // Drop the WASM instance on any inference failure. A later request will create a
-    // fresh worker/engine instead of leaving the UI stuck in a transcribing state.
-    service = null
-    initializedModel = null
-    workerScope.postMessage({ id: message.id, type: 'error', error: detail })
+    const detail = error instanceof Error ? error.message : String(error)
+    transcriber = null
+    currentModel = null
+    loadingPromise = null
+    post({ id: message.id, type: 'error', error: detail })
   }
 }

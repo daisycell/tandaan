@@ -8,7 +8,7 @@ const normalize = (text: string) => text
 export type Intent = 'task' | 'shopping' | 'purchase' | 'note'
 type BinaryIntent = 'shopping' | 'purchase'
 
-type ParsedLine = { itemName: string; quantity?: number | null; unit?: string | null; price?: number | null }
+export type ParsedLine = { itemName: string; quantity?: number | null; unit?: string | null; price?: number | null }
 
 export type ParsedInput = {
   intent: Intent
