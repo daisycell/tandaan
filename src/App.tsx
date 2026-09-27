@@ -152,6 +152,7 @@ export default function App() {
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
   const [voiceLevel, setVoiceLevel] = useState(0)
   const [voiceSeconds, setVoiceSeconds] = useState(0)
+  const [voiceProgress, setVoiceProgress] = useState<number | null>(null)
   const [voiceError, setVoiceError] = useState('')
   const dueTimeRef = useRef<HTMLInputElement | null>(null)
   const [voiceTranscript, setVoiceTranscript] = useState('')
@@ -558,38 +559,67 @@ export default function App() {
     }
   }
 
+  async function transcribeCaptured(result: { blob: Blob; durationMs: number }) {
+    setVoiceState('transcribing')
+    setVoiceLevel(0)
+    setVoiceProgress(null)
+    setStatus('Transcribing on this device…')
+    try {
+      const transcript = await transcribeVoice(result.blob, result.durationMs, progress => {
+        if (progress >= 100) {
+          setVoiceProgress(null)
+          setStatus('Transcribing on this device…')
+        } else {
+          setVoiceProgress(progress)
+          setStatus(`Preparing voice on this device… ${progress}%`)
+        }
+      })
+      setVoiceTranscript(transcript)
+      setInput(transcript)
+      setVoiceReview(parseInput(transcript))
+      setStatus('Voice transcript ready · review before saving')
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.')
+      setStatus('Voice is ready to try again')
+    } finally {
+      setVoiceState('idle')
+      setVoiceLevel(0)
+      setVoiceProgress(null)
+      recorderRef.current = null
+    }
+  }
+
   async function startVoice() {
     setVoiceError('')
     setVoiceTranscript('')
     setVoiceSeconds(0)
+
+    if (voiceState === 'transcribing') return
+
     if (voiceState === 'recording') {
-      if (recorderRef.current) {
-        const recorder = recorderRef.current
-        recorderRef.current = null
-        setVoiceState('transcribing')
-        try {
-          const result = await recorder.stop()
-          setStatus('Getting voice ready on this device…')
-          const transcript = await transcribeVoice(result.blob, result.durationMs, progress => {
-            setStatus(progress >= 100 ? 'Voice ready · transcribing on this device…' : `Getting voice ready… ${progress}%`)
-          })
-          setVoiceTranscript(transcript)
-          setInput(transcript)
-          setVoiceReview(parseInput(transcript))
-        } catch (error) {
-          setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.')
-        } finally {
-          setVoiceState('idle')
-          setVoiceLevel(0)
-        }
+      const recorder = recorderRef.current
+      if (recorder) {
+        setStatus('Finishing recording…')
+        void recorder.stop().catch(error => {
+          setVoiceError(error instanceof Error ? error.message : 'Could not stop the recording.')
+        })
       }
       return
     }
 
     try {
-      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 30_000)
+      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 15_000)
       recorderRef.current = recorder
       setVoiceState('recording')
+      setStatus('Listening… pause when you finish')
+      void recorder.finished
+        .then(result => transcribeCaptured(result))
+        .catch(error => {
+          setVoiceError(error instanceof Error ? error.message : 'Recording failed.')
+          setVoiceState('idle')
+          setVoiceLevel(0)
+          recorderRef.current = null
+        })
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : 'Could not access the microphone.')
       setVoiceState('idle')
@@ -654,12 +684,12 @@ export default function App() {
           <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addFromText() }} placeholder="Try: Pay electricity tomorrow at 6 PM" />
           <button className="primary add-btn" onClick={() => void addFromText()}><Plus size={18} /> Add</button>
         </div>
-        <button className={voiceState === 'recording' ? 'voice-btn recording' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing'}>
+        <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' ? 'voice-btn transcribing' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing'}>
           {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
+          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'transcribing' ? (voiceProgress != null ? `Preparing voice · ${voiceProgress}%` : 'Transcribing locally…') : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
-        <div className="quick-hints"><strong>Quick input</strong> · Type naturally or tap Speak. A short pause after you finish speaking stops the recording automatically. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM” · “shampoo 1 habon 2 toothpaste kalamay delata 3”</div>
+        <div className="quick-hints"><strong>Quick input</strong> · Type naturally or tap Speak. A short pause after you finish speaking stops the recording automatically. Keep a voice capture under 15 seconds for on-device stability. Examples: “I'll buy egg 200” · “Rice 40” · “Egg 1 tray 400” · “Mabakal bugas kag itlog” · “Pay electricity tomorrow at 6 PM” · “shampoo 1 habon 2 toothpaste kalamay delata 3”</div>
         {voiceError && <div className="inline-error">{voiceError}</div>}
       </section>
 

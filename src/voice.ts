@@ -1,7 +1,12 @@
 let whisperEnginePromise: Promise<WhisperEngine> | null = null
+let activeTranscriptionPromise: Promise<string> | null = null
 
 export type VoiceCaptureResult = { blob: Blob; durationMs: number }
-export type VoiceRecorder = { stop: () => Promise<VoiceCaptureResult>; cancel: () => void }
+export type VoiceRecorder = {
+  stop: () => Promise<VoiceCaptureResult>
+  cancel: () => void
+  finished: Promise<VoiceCaptureResult>
+}
 
 type WhisperEngine = {
   loadProgress: number
@@ -22,9 +27,10 @@ function extensionForMime(mime: string) {
 }
 
 /**
- * Capture clean mono microphone audio. Audio stays on-device; transcription is local WASM.
+ * Capture clean mono microphone audio. Auto-stop is reported through `finished`,
+ * so the UI cannot race a second manual stop against the same recorder.
  */
-export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 20_000): Promise<VoiceRecorder> {
+export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 15_000): Promise<VoiceRecorder> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     throw new Error('Microphone recording is not supported by this browser.')
   }
@@ -44,15 +50,24 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
   const chunks: Blob[] = []
   const startedAt = performance.now()
   let animation = 0
-  let finished = false
+  let settled = false
   let speechStarted = false
   let silenceStartedAt = 0
   let timer = 0
+
   const silenceThreshold = 0.045
-  const silenceDurationMs = 650
+  const silenceDurationMs = 800
+
+  let resolveFinished!: (value: VoiceCaptureResult) => void
+  let rejectFinished!: (reason?: unknown) => void
+  const finished = new Promise<VoiceCaptureResult>((resolve, reject) => {
+    resolveFinished = resolve
+    rejectFinished = reject
+  })
 
   const cleanup = async () => {
     cancelAnimationFrame(animation)
+    clearTimeout(timer)
     source.disconnect()
     analyser.disconnect()
     stream.getTracks().forEach(track => track.stop())
@@ -60,26 +75,32 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
     onLevel?.(0)
   }
 
-  const stop = () => new Promise<VoiceCaptureResult>((resolve, reject) => {
-    if (finished) return reject(new Error('Recording has already ended.'))
-    finished = true
+  const finalizeStop = () => {
+    if (settled) return finished
+    settled = true
     clearTimeout(timer)
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' })
-      void cleanup().then(() => resolve({ blob, durationMs: Math.round(performance.now() - startedAt) }))
+      const result = { blob, durationMs: Math.round(performance.now() - startedAt) }
+      void cleanup().then(() => resolveFinished(result))
     }
-    recorder.onerror = () => { void cleanup().then(() => reject(new Error('Recording failed.'))) }
+    recorder.onerror = () => {
+      void cleanup().then(() => rejectFinished(new Error('Recording failed.')))
+    }
     try {
       recorder.stop()
     } catch {
       void cleanup()
-      reject(new Error('Recording could not be stopped.'))
+      rejectFinished(new Error('Recording could not be stopped.'))
     }
-  })
+    return finished
+  }
+
+  const stop = () => finalizeStop()
 
   const cancel = () => {
-    if (finished) return
-    finished = true
+    if (settled) return
+    settled = true
     clearTimeout(timer)
     recorder.onstop = () => { void cleanup() }
     try { recorder.stop() } catch { void cleanup() }
@@ -99,8 +120,8 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
       silenceStartedAt = 0
     } else if (speechStarted && !silenceStartedAt) {
       silenceStartedAt = performance.now()
-    } else if (speechStarted && silenceStartedAt && performance.now() - silenceStartedAt >= silenceDurationMs && !finished) {
-      void stop()
+    } else if (speechStarted && silenceStartedAt && performance.now() - silenceStartedAt >= silenceDurationMs && !settled) {
+      void finalizeStop()
       return
     }
     animation = requestAnimationFrame(updateLevel)
@@ -109,11 +130,12 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
   recorder.ondataavailable = event => {
     if (event.data.size > 0) chunks.push(event.data)
   }
+
   recorder.start(200)
   updateLevel()
-  timer = window.setTimeout(() => { void stop() }, maxDurationMs)
+  timer = window.setTimeout(() => { void finalizeStop() }, maxDurationMs)
 
-  return { stop, cancel }
+  return { stop, cancel, finished }
 }
 
 function chooseModelId() {
@@ -133,22 +155,25 @@ async function createWhisperEngine(onProgress?: ProgressCallback): Promise<Whisp
   await service.initModel(model)
 
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent)
-  const threads = crossOriginIsolated && !isIOS ? 4 : 1
+  // Base model is memory-heavy on iOS. One thread avoids extra worker/heap pressure.
+  const threads = isIOS ? 1 : (crossOriginIsolated ? 2 : 1)
 
-  const transcribeWithFreshSession = async (audioData: Float32Array) => {
-    const session = service.createSession()
-    const segments: string[] = []
-    for await (const segment of session.streaming(audioData, {
-      language: 'auto',
-      threads,
-      translate: false,
-      timeoutMs: 45_000,
-      sleepMsBetweenChunks: 0,
-    })) {
-      const text = segment.text.trim()
-      if (text) segments.push(text)
-    }
-    const text = segments.join(' ').replace(/\s+/g, ' ').trim()
+  const transcribeOnce = async (audioData: Float32Array) => {
+    const result = await service.transcribe(
+      audioData,
+      undefined,
+      {
+        language: 'auto',
+        threads,
+        translate: false,
+      },
+    )
+    const text = result.segments
+      .map(segment => segment.text.trim())
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
     if (!text) throw new Error('No speech was recognized. Try speaking a little closer to the phone.')
     return text
   }
@@ -156,19 +181,32 @@ async function createWhisperEngine(onProgress?: ProgressCallback): Promise<Whisp
   return {
     loadProgress: 100,
     transcribe: async (audioData: Float32Array) => {
-      try {
-        return await transcribeWithFreshSession(audioData)
-      } catch (firstError) {
-        // Reinitialize the WASM module once after a runtime abort/termination.
-        // The model stays cached in IndexedDB, so recovery does not redownload it.
+      if (activeTranscriptionPromise) return activeTranscriptionPromise
+
+      activeTranscriptionPromise = (async () => {
         try {
-          await service.restartModel()
-          return await transcribeWithFreshSession(audioData)
-        } catch (retryError) {
-          const message = retryError instanceof Error ? retryError.message : firstError instanceof Error ? firstError.message : 'WASM transcription failed.'
-          throw new Error(message)
+          return await transcribeOnce(audioData)
+        } catch (error) {
+          const firstMessage = error instanceof Error ? error.message : 'WASM transcription failed.'
+          // Do not immediately reinitialize on memory exhaustion; that can worsen pressure on iOS.
+          if (/out of memory|memory|allocation|cannot allocate/i.test(firstMessage)) {
+            whisperEnginePromise = null
+            throw new Error('Your phone ran out of memory while transcribing. Try a shorter recording, around 5–10 seconds.')
+          }
+
+          try {
+            await service.restartModel()
+            return await transcribeOnce(audioData)
+          } catch (retryError) {
+            const message = retryError instanceof Error ? retryError.message : firstMessage
+            throw new Error(message)
+          }
+        } finally {
+          activeTranscriptionPromise = null
         }
-      }
+      })()
+
+      return activeTranscriptionPromise
     },
   }
 }
@@ -182,12 +220,55 @@ async function loadWhisperEngine(onProgress?: ProgressCallback): Promise<Whisper
   return whisperEnginePromise
 }
 
+function trimSilence(audioData: Float32Array) {
+  if (audioData.length < 16_000) return audioData
+
+  const sampleRate = 16_000
+  const frameSize = 320 // 20ms
+  const threshold = 0.008
+  let first = 0
+  let last = audioData.length - 1
+  let found = false
+
+  for (let start = 0; start < audioData.length; start += frameSize) {
+    const end = Math.min(audioData.length, start + frameSize)
+    let sum = 0
+    for (let i = start; i < end; i += 1) sum += audioData[i] * audioData[i]
+    const rms = Math.sqrt(sum / Math.max(1, end - start))
+    if (rms >= threshold) {
+      first = start
+      found = true
+      break
+    }
+  }
+
+  if (!found) return audioData
+
+  for (let end = audioData.length; end > 0; end -= frameSize) {
+    const start = Math.max(0, end - frameSize)
+    let sum = 0
+    for (let i = start; i < end; i += 1) sum += audioData[i] * audioData[i]
+    const rms = Math.sqrt(sum / Math.max(1, end - start))
+    if (rms >= threshold) {
+      last = end
+      break
+    }
+  }
+
+  const pad = Math.round(sampleRate * 0.12)
+  const from = Math.max(0, first - pad)
+  const to = Math.min(audioData.length, last + pad)
+  if (to - from < 16_000) return audioData
+  return audioData.slice(from, to)
+}
+
 export async function transcribeVoice(blob: Blob, durationMs: number, onProgress?: ProgressCallback) {
   if (durationMs < 350) throw new Error('The recording is too short.')
   if (typeof window === 'undefined' || typeof AudioContext === 'undefined') {
     throw new Error('Offline voice is not supported in this environment.')
   }
   if (!blob.size) throw new Error('The microphone recording was empty. Please try again.')
+  if (durationMs > 18_000) throw new Error('Recording is too long for on-device voice. Try a shorter recording.')
 
   const { convertFromFile } = await import('@timur00kh/whisper.wasm')
   const mime = blob.type || 'audio/webm'
@@ -197,16 +278,23 @@ export async function transcribeVoice(blob: Blob, durationMs: number, onProgress
   let audioData: Float32Array
   try {
     const conversion = await convertFromFile(file, { normalize: true })
-    audioData = conversion.audioData
+    audioData = trimSilence(conversion.audioData)
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'Audio conversion failed.'
     throw new Error(`Could not prepare the recording for offline transcription: ${detail}`)
   }
 
-  const engine = await loadWhisperEngine(onProgress)
+  // Let the UI distinguish model loading from the actual transcription phase.
+  onProgress?.(0)
+  const engine = await loadWhisperEngine(progress => onProgress?.(progress))
+  onProgress?.(100)
   try {
-    return await engine.transcribe(audioData)
+    const result = await engine.transcribe(audioData)
+    // Drop our JS-side reference as soon as the result is available.
+    audioData = new Float32Array(0)
+    return result
   } catch (error) {
+    audioData = new Float32Array(0)
     whisperEnginePromise = null
     const detail = error instanceof Error ? error.message : 'Local voice transcription failed.'
     throw new Error(`Local voice transcription failed: ${detail}`)

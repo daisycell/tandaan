@@ -231,3 +231,80 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 @media (prefers-reduced-motion: reduce) {
   .summary-card-sticker { animation: none; }
 }
+
+/* v36 mobile/compact polish */
+.summary-card { padding-right: 50px; }
+.summary-card::after { width: 74px; height: 74px; right: -24px; top: -24px; }
+.summary-card-sticker { width: 34px; height: 34px; right: 7px; top: 7px; }
+.icon-btn svg, .check-btn svg, .primary svg, .secondary svg { display: block; flex: none; }
+.task-actions { align-items: center; }
+.task-actions .icon-btn { width: 42px; height: 42px; padding: 0; display: grid; place-items: center; }
+.check-btn { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; }
+.voice-btn { position: relative; padding-left: 54px; padding-right: 54px; }
+.voice-btn > svg:first-child { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); }
+.voice-meter { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); width: 44px; height: 18px; }
+.voice-meter span { width: 40px; }
+
+@media (max-width: 620px) {
+  body { background-attachment: scroll; }
+  .app-shell { width: 100%; padding: 10px 10px max(44px, env(safe-area-inset-bottom)); }
+  .app-header { padding-top: max(4px, env(safe-area-inset-top)); padding-bottom: 10px; }
+  .brand-row { gap: 9px; min-width: 0; }
+  .brand-mark.small { width: 44px; height: 44px; border-radius: 13px; }
+  .brand { font-size: 24px; }
+  .sync-status { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .header-actions { gap: 6px; }
+  .icon-btn { width: 44px; height: 44px; border-radius: 13px; }
+
+  .hero { padding: 18px 0 14px; }
+  .hero h1 { font-size: clamp(30px, 9vw, 40px); line-height: 1.02; overflow-wrap: anywhere; }
+  .hero p { line-height: 1.45; }
+  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 16px; }
+  .summary-card:last-child { grid-column: 1 / -1; }
+  .summary-card { min-height: 96px; padding: 12px 46px 12px 12px; border-radius: 17px; }
+  .summary-card span { font-size: 11px; }
+  .summary-card strong { font-size: 19px; }
+  .summary-card small { font-size: 10px; }
+  .summary-card::after { width: 68px; height: 68px; right: -21px; top: -21px; }
+  .summary-card-sticker { width: 29px; height: 29px; right: 6px; top: 6px; }
+
+  .quick-add { padding: 14px; border-radius: 17px; }
+  .section-title { align-items: center; }
+  .section-title span { max-width: 72vw; }
+  .beta-pill { padding: 6px 8px; }
+  .input-row { gap: 8px; }
+  .input-row input { min-height: 52px; }
+  .add-btn { min-height: 52px; }
+  .voice-btn { min-height: 54px; padding-left: 48px; padding-right: 48px; }
+  .voice-btn > svg:first-child { left: 16px; }
+  .voice-meter { right: 14px; }
+  .quick-hints { font-size: 10.5px; }
+
+  .section-block { margin-top: 22px; }
+  .section-heading { margin-bottom: 8px; }
+  .section-heading h2 { font-size: 19px; }
+  .task-list { gap: 8px; }
+  .task-card { padding: 12px; gap: 9px; grid-template-columns: 40px minmax(0, 1fr) auto; border-radius: 17px; min-height: 70px; }
+  .task-main { min-width: 0; }
+  .task-title { font-size: 14px; overflow-wrap: anywhere; }
+  .task-actions .icon-btn { width: 40px; height: 40px; }
+  .due-line, .detail-line { font-size: 11px; }
+
+  .modal-backdrop { padding: 8px; align-items: end; }
+  .modal { width: 100%; max-height: 90vh; padding: 15px; border-radius: 21px; }
+  .modal-header strong { font-size: 17px; }
+  .modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .modal-actions > button { width: 100%; min-height: 46px; }
+  .settings-modal { max-height: 92vh; }
+  .theme-grid { grid-template-columns: 1fr; gap: 8px; }
+  .theme-choice { min-height: 108px; display: grid; grid-template-columns: 44px 58px minmax(0,1fr); align-items: center; column-gap: 9px; padding: 10px; }
+  .theme-choice .theme-animal-icon { font-size: 28px; }
+  .theme-choice-sticker { width: 54px; height: 54px; }
+  .theme-choice > svg { right: 10px; top: 10px; }
+  .custom-theme-preview { min-height: 130px; }
+  .custom-theme-preview-stickers img { width: 42px; height: 42px; }
+  .upload-control { align-items: flex-start; flex-direction: column; }
+  .file-btn { width: 100%; }
+  .choice-grid { gap: 8px; }
+  .choice-card { min-height: 48px; padding: 12px; }
+}
