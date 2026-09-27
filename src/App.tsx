@@ -57,7 +57,6 @@ export default function App() {
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
   const [dueTime, setDueTime] = useState('')
-  const [dueHasTime, setDueHasTime] = useState(false)
 
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [editingShopping, setEditingShopping] = useState<ShoppingItem | null>(null)
@@ -66,7 +65,6 @@ export default function App() {
   const [editTitle, setEditTitle] = useState('')
   const [editDueDate, setEditDueDate] = useState('')
   const [editDueTime, setEditDueTime] = useState('')
-  const [editDueHasTime, setEditDueHasTime] = useState(false)
 
   const [editShoppingName, setEditShoppingName] = useState('')
   const [editShoppingQty, setEditShoppingQty] = useState('')
@@ -82,6 +80,7 @@ export default function App() {
   const [voiceLevel, setVoiceLevel] = useState(0)
   const [voiceSeconds, setVoiceSeconds] = useState(0)
   const [voiceError, setVoiceError] = useState('')
+  const dueTimeRef = useRef<HTMLInputElement | null>(null)
   const [voiceTranscript, setVoiceTranscript] = useState('')
   const [voiceReview, setVoiceReview] = useState<ParsedInput | null>(null)
   const recorderRef = useRef<VoiceRecorder | null>(null)
@@ -234,7 +233,7 @@ export default function App() {
         setDuePrompt({ title })
         setDueDate('')
         setDueTime('')
-        setDueHasTime(false)
+        setDueTime('')
       }
       return
     }
@@ -270,23 +269,33 @@ export default function App() {
     await saveParsed(parsed)
   }
 
-  async function saveDueChoice(mode: 'today' | 'tomorrow' | 'custom' | 'none') {
+  function selectQuickDue(mode: 'today' | 'tomorrow') {
+    const selected = mode === 'today' ? localISODate(new Date()) : tomorrowISO()
+    setDueDate(selected)
+    setDueTime('')
+    window.setTimeout(() => dueTimeRef.current?.focus(), 60)
+  }
+
+  async function saveDueChoice(mode: 'custom' | 'none') {
     if (!duePrompt) return
-    let nextDate: string | null = null
-    let nextTime: string | null = null
-    if (mode === 'today') nextDate = localISODate(new Date())
-    if (mode === 'tomorrow') nextDate = tomorrowISO()
-    if (mode === 'custom') {
-      nextDate = dueDate || null
-      nextTime = dueDate && dueHasTime && dueTime ? dueTime : null
+    if (mode === 'none') {
+      const task = taskWithReminder(duePrompt.title, null, null)
+      await persistTask(task, 'Task saved')
+      setDuePrompt(null)
+      setDueDate('')
+      setDueTime('')
+      return
     }
-    if (nextDate) void ensureReminders()
+
+    const nextDate = dueDate || null
+    const nextTime = nextDate && dueTime ? dueTime : null
+    if (!nextDate) return
+    void ensureReminders()
     const task = taskWithReminder(duePrompt.title, nextDate, nextTime)
     await persistTask(task, 'Task saved')
     setDuePrompt(null)
     setDueDate('')
     setDueTime('')
-    setDueHasTime(false)
   }
 
   function startEditTask(task: Task) {
@@ -294,13 +303,12 @@ export default function App() {
     setEditTitle(task.title)
     setEditDueDate(task.dueDate ?? '')
     setEditDueTime(task.dueTime ?? '')
-    setEditDueHasTime(Boolean(task.dueTime))
   }
 
   async function saveTaskEdit() {
     if (!editingTask) return
     const nextDate = editDueDate || null
-    const nextTime = nextDate && editDueHasTime && editDueTime ? editDueTime : null
+    const nextTime = nextDate && editDueTime ? editDueTime : null
     const dateChanged = nextDate !== editingTask.dueDate || nextTime !== editingTask.dueTime
     const updated: Task = { ...editingTask, title: editTitle.trim() || editingTask.title, dueDate: nextDate, dueTime: nextTime, reminderEnabled: Boolean(nextDate), reminderMinutesBefore: 1440, reminderAt: dateChanged ? calculateReminderAt(nextDate, nextTime, 1440) : (editingTask.reminderAt ?? calculateReminderAt(nextDate, nextTime, 1440)), reminderSentAt: dateChanged ? null : (editingTask.reminderSentAt ?? null), updatedAt: new Date().toISOString() }
     if (nextDate) void ensureReminders()
@@ -524,13 +532,18 @@ export default function App() {
         <div className="modal-backdrop">
           <div className="modal card">
             <div className="modal-header"><div><strong>When is this due?</strong><div className="modal-subtitle">{duePrompt.title}</div></div><button className="icon-btn" onClick={() => setDuePrompt(null)}><X /></button></div>
-            <div className="choice-grid"><button className="choice-card" onClick={() => void saveDueChoice('today')}>Today</button><button className="choice-card" onClick={() => void saveDueChoice('tomorrow')}>Tomorrow</button><button className="choice-card wide" onClick={() => void saveDueChoice('none')}>No due date</button></div>
+            <div className="choice-grid">
+              <button className="choice-card" onClick={() => selectQuickDue('today')}>Today</button>
+              <button className="choice-card" onClick={() => selectQuickDue('tomorrow')}>Tomorrow</button>
+              <button className="choice-card" onClick={() => setDueDate(dueDate || localISODate(new Date()))}>Choose date</button>
+              <button className="choice-card wide" onClick={() => void saveDueChoice('none')}>No due date</button>
+            </div>
             <div className="custom-due card-inner">
-              <label>Choose a date</label>
+              <label>Due date <span>Choose a date above or here</span></label>
               <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
-              <div className="optional-toggle"><button className={dueHasTime ? 'secondary' : 'secondary active'} onClick={() => { setDueHasTime(false); setDueTime('') }}>Date only</button><button className={dueHasTime ? 'secondary active' : 'secondary'} disabled={!dueDate} onClick={() => setDueHasTime(true)}>Add time</button></div>
-              {dueHasTime && <input aria-label="Optional time" type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} />}
-              <button className="primary full" disabled={!dueDate} onClick={() => void saveDueChoice('custom')}><CalendarPlus size={17} /> Save with this date</button>
+              <label className="optional-time-label">Time <span>optional — leave blank for date only</span></label>
+              <input ref={dueTimeRef} aria-label="Optional time" type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} />
+              <button className="primary full" disabled={!dueDate} onClick={() => void saveDueChoice('custom')}><CalendarPlus size={17} /> Save due date</button>
             </div>
           </div>
         </div>
@@ -539,7 +552,7 @@ export default function App() {
       {editingTask && (
         <div className="modal-backdrop"><div className="modal card"><div className="modal-header"><strong>Edit task</strong><button className="icon-btn" onClick={() => setEditingTask(null)}><X /></button></div>
           <label>Task</label><input value={editTitle} onChange={e => setEditTitle(e.target.value)} />
-          <div className="custom-due card-inner"><label>Due date</label><input type="date" value={editDueDate} onChange={e => setEditDueDate(e.target.value)} /><div className="optional-toggle"><button className="secondary" onClick={() => { setEditDueHasTime(false); setEditDueTime('') }}>Date only</button><button className="secondary" disabled={!editDueDate} onClick={() => setEditDueHasTime(true)}>Add time</button></div>{editDueHasTime && <input aria-label="Optional time" type="time" value={editDueTime} onChange={e => setEditDueTime(e.target.value)} disabled={!editDueDate} />}{editDueDate && <button className="secondary full" onClick={() => { setEditDueDate(''); setEditDueTime(''); setEditDueHasTime(false) }}>Remove due date</button>}</div>
+          <div className="custom-due card-inner"><label>Due date <span>Optional</span></label><input type="date" value={editDueDate} onChange={e => setEditDueDate(e.target.value)} />{editDueDate && <><label className="optional-time-label">Time <span>optional — leave blank for date only</span></label><input aria-label="Optional time" type="time" value={editDueTime} onChange={e => setEditDueTime(e.target.value)} /></>}{editDueDate && <button className="secondary full" onClick={() => { setEditDueDate(''); setEditDueTime('') }}>Remove due date</button>}</div>
           <div className="modal-actions"><button className="secondary" onClick={() => setEditingTask(null)}>Cancel</button><button className="primary" onClick={() => void saveTaskEdit()}>Save changes</button></div>
         </div></div>
       )}

@@ -53,3 +53,8 @@ This package includes TypeScript fixes for Vite PWA registration, duplicate pars
 
 ## PWA note
 This build intentionally uses `public/sw.js` instead of `vite-plugin-pwa`/Workbox injection. The service worker provides the offline shell and Web Push handlers without a build-time manifest injection step.
+
+## v18 notes
+- Voice no longer fails immediately when an anonymous session is missing; it attempts to establish one when online.
+- Task due-date prompts now let Today/Tomorrow flow directly into an optional time picker, with date-only still supported.
+- The PWA build now precaches the exact Vite output assets so a Home Screen install can reopen offline reliably after the first online load.

@@ -111,6 +111,9 @@ input:focus { border-color: #67e8f9; box-shadow: 0 0 0 3px rgba(103,232,249,.12)
 .voice-meter span { width: 54px; height: 16px; display: block; transform-origin: bottom center; border-radius: 999px; background: #62e7df; transition: transform .08s linear; }
 .inline-error { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255,120,140,.08); color: #ffb0bd; border: 1px solid rgba(255,120,140,.2); }
 .optional-toggle { display: flex; gap: 8px; margin: 10px 0; }
+.optional-time-label { margin-top: 10px; }
+.optional-time-label span { color:#6f88a4; font-weight:400; }
+
 .optional-toggle .active { outline: 2px solid rgba(98,231,223,.35); }
 .review-block { border: 1px solid #2b415e; background: #0c192b; border-radius: 14px; padding: 14px; }
 .review-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .1em; color: #7ea0c9; margin-bottom: 8px; }

@@ -113,9 +113,22 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
   form.append('model', 'whisper-large-v3-turbo')
 
   const supabaseModule = await import('./supabase')
-  const sessionResult = supabaseModule.supabase ? await supabaseModule.supabase.auth.getSession() : null
-  const token = sessionResult?.data.session?.access_token
-  if (!token) throw new Error('Please reconnect to Tandaan before using voice input.')
+  const syncModule = await import('./sync')
+  if (!supabaseModule.supabase) throw new Error('Tandaan voice is not configured.')
+
+  let sessionResult = await supabaseModule.supabase.auth.getSession()
+  let token = sessionResult.data.session?.access_token
+  if (!token) {
+    try {
+      await syncModule.getUserId()
+      sessionResult = await supabaseModule.supabase.auth.getSession()
+      token = sessionResult.data.session?.access_token
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not reconnect Tandaan.'
+      throw new Error(`Voice needs a Tandaan session. ${message}`)
+    }
+  }
+  if (!token) throw new Error('Voice needs a Tandaan session. Please open Tandaan online once and try again.')
 
   const response = await fetch('/api/transcribe', {
     method: 'POST',
