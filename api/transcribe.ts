@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
+import Groq, { toFile } from 'groq-sdk'
 
-export const runtime = 'edge'
+export const runtime = 'nodejs'
 export const maxDuration = 60
 
 function json(data: unknown, status = 200) {
@@ -18,11 +19,27 @@ function env(name: string) {
 }
 
 function extensionForMime(mime: string) {
+  if (mime.includes('wav')) return 'wav'
   if (mime.includes('mp4') || mime.includes('m4a')) return 'm4a'
   if (mime.includes('ogg')) return 'ogg'
-  if (mime.includes('wav')) return 'wav'
   if (mime.includes('mpeg') || mime.includes('mp3')) return 'mp3'
+  if (mime.includes('flac')) return 'flac'
   return 'webm'
+}
+
+function messageForError(error: unknown) {
+  if (error instanceof Groq.APIError) {
+    if (error.status === 401) return 'Voice service authentication failed. Please check the Groq API key in Vercel.'
+    if (error.status === 403) return 'Voice service access was denied. Please check the Groq account and API key.'
+    if (error.status === 413) return 'The voice recording is too large. Please keep it short.'
+    if (error.status === 429) return 'Voice service is busy right now. Please try again in a moment.'
+    if (error.status && error.status >= 500) return 'The voice service is temporarily unavailable. Please try again.'
+    return error.message || 'Voice transcription failed.'
+  }
+  if (error instanceof Error && /timeout|timed out|aborted/i.test(error.message)) {
+    return 'Voice transcription took too long. Try a shorter phrase.'
+  }
+  return 'Voice transcription is temporarily unavailable. Please try again.'
 }
 
 export default async function handler(req: Request) {
@@ -35,61 +52,59 @@ export default async function handler(req: Request) {
     const supabaseKey = env('SUPABASE_SECRET_KEY') || env('SUPABASE_SERVICE_ROLE_KEY') || env('VITE_SUPABASE_PUBLISHABLE_KEY')
     const authorization = req.headers.get('authorization')
 
-    if (!supabaseUrl || !supabaseKey || !authorization?.startsWith('Bearer ')) return json({ error: 'Authentication required.' }, 401)
+    if (!supabaseUrl || !supabaseKey || !authorization?.startsWith('Bearer ')) {
+      return json({ error: 'Authentication required.' }, 401)
+    }
     if (!groqKey) return json({ error: 'Voice transcription is not configured. GROQ_API_KEY is missing.' }, 503)
 
     const token = authorization.slice('Bearer '.length).trim()
-    const authClient = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false, autoRefreshToken: false } })
+    const authClient = createClient(supabaseUrl, supabaseKey, {
+      auth: { persistSession: false, autoRefreshToken: false }
+    })
     const { data: claimsData, error: claimsError } = await authClient.auth.getClaims(token)
     if (claimsError || !claimsData?.claims?.sub) return json({ error: 'Invalid Tandaan session.' }, 401)
 
-    const raw = await req.arrayBuffer()
+    const raw = Buffer.from(await req.arrayBuffer())
     if (raw.byteLength === 0) return json({ error: 'Audio file is missing.' }, 400)
-    if (raw.byteLength > 25 * 1024 * 1024) return json({ error: 'Audio file is too large. Keep recordings under 25 MB.' }, 413)
+    if (raw.byteLength > 4 * 1024 * 1024) {
+      return json({ error: 'Audio file is too large. Please keep recordings short.' }, 413)
+    }
 
     const requestContentType = (req.headers.get('content-type') || 'audio/webm').split(';')[0].toLowerCase()
     const mime = requestContentType.startsWith('audio/') ? requestContentType : 'audio/webm'
     const filename = `tandaan-voice.${extensionForMime(mime)}`
 
-    const form = new FormData()
-    form.append('file', new Blob([raw], { type: mime }), filename)
-    form.append('model', 'whisper-large-v3-turbo')
-    form.append('response_format', 'json')
-    form.append('temperature', '0')
-    form.append('prompt', 'Philippine household and shopping vocabulary: bugas, itlog, habon, shampoo, toothpaste, kalamay delata, kilo, tray, lata, pulo, duha, tatlo, apat, lima, pesos, palit, mabakal, nabakal, buy, bought, tomorrow, today.')
+    const groq = new Groq({
+      apiKey: groqKey,
+      timeout: 25_000,
+      maxRetries: 0
+    })
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 30_000)
-    let groqResponse: Response
-    try {
-      groqResponse = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${groqKey}` },
-        body: form,
-        signal: controller.signal,
-        cache: 'no-store'
-      })
-    } finally {
-      clearTimeout(timeout)
-    }
+    const file = await toFile(raw, filename, { type: mime })
+    const transcription = await groq.audio.transcriptions.create({
+      file,
+      model: 'whisper-large-v3-turbo',
+      response_format: 'json',
+      temperature: 0,
+      // Keep this short: Groq notes prompts should match the audio language.
+      prompt: 'Philippine household shopping words: bugas, itlog, habon, shampoo, toothpaste, kalamay, delata, kilo, tray, lata, pulo, duha, tatlo, apat, lima, palit, mabakal, nabakal.'
+    })
 
-    const payload = await groqResponse.json().catch(() => ({})) as { text?: string; error?: { message?: string } | string }
-    if (!groqResponse.ok) {
-      const providerMessage = typeof payload.error === 'string' ? payload.error : payload.error?.message
-      if (groqResponse.status === 429) return json({ error: 'Voice service is busy right now. Please try again in a moment.' }, 429)
-      if (groqResponse.status === 401) return json({ error: 'Voice service authentication failed. Check the Groq API key in Vercel.' }, 502)
-      return json({ error: providerMessage || `Voice provider returned HTTP ${groqResponse.status}.` }, 502)
-    }
-
-    const text = String(payload.text || '').trim()
+    const text = String(transcription?.text || '').trim()
     if (!text) return json({ error: 'No speech was recognized. Try speaking a little closer to the phone.' }, 422)
 
-    console.info('Tandaan transcription completed', { durationMs: Date.now() - startedAt, audioBytes: raw.byteLength })
+    console.info('Tandaan transcription completed', {
+      durationMs: Date.now() - startedAt,
+      audioBytes: raw.byteLength,
+      contentType: mime
+    })
     return json({ text })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error('Tandaan /api/transcribe error', { durationMs: Date.now() - startedAt, error: message })
-    if (/aborted|timeout/i.test(message)) return json({ error: 'Voice transcription took too long. Try a shorter phrase.' }, 504)
-    return json({ error: 'Voice transcription is temporarily unavailable. Please try again.' }, 500)
+    const message = messageForError(error)
+    console.error('Tandaan /api/transcribe error', {
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    return json({ error: message }, /timeout|timed out/i.test(message) ? 504 : 500)
   }
 }

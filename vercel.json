@@ -1,6 +1,7 @@
 {
   "functions": {
     "api/transcribe.ts": {
+      "runtime": "nodejs20.x",
       "maxDuration": 60
     },
     "api/send-due-reminders.ts": {
