@@ -2,10 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/transcribe.ts": {
-      "maxDuration": 60
+      "maxDuration": 30,
+      "regions": ["sin1"]
     },
     "api/send-due-reminders.ts": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "regions": ["sin1"]
     }
   }
 }

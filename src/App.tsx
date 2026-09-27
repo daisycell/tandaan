@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Mic, Pencil, Plus, Settings, ShoppingCart, Sparkles, Square, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
-import { db, getLocalName, getLocalTheme, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme } from './db'
+import { db, getLocalName, getLocalTheme, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeCustomizations } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { parseInput, type ParsedInput } from './parser'
 import { supabase } from './supabase'
@@ -9,11 +9,40 @@ import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
 import { startVoiceCapture, transcribeVoice, type VoiceRecorder } from './voice'
 import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
-import { DEFAULT_THEME, THEME_OPTIONS, isThemeId, themeOption } from './theme'
+import { DEFAULT_THEME, STICKERS, THEME_OPTIONS, isThemeId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
 
 function newId() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+type ThemeCustomizations = {
+  stickers: Record<ThemeId, string[]>
+  backgrounds: Record<ThemeId, string>
+}
+
+const DEFAULT_THEME_CUSTOMIZATIONS: ThemeCustomizations = {
+  stickers: {
+    cat: STICKERS.cat.slice(),
+    dog: STICKERS.dog.slice(),
+    capybara: STICKERS.capybara.slice(),
+  },
+  backgrounds: { cat: '', dog: '', capybara: '' },
+}
+
+function normalizeThemeCustomizations(value?: Partial<ThemeCustomizations> | null): ThemeCustomizations {
+  return {
+    stickers: {
+      cat: STICKERS.cat.slice(),
+      dog: STICKERS.dog.slice(),
+      capybara: STICKERS.capybara.slice(),
+    },
+    backgrounds: {
+      cat: value?.backgrounds?.cat ?? '',
+      dog: value?.backgrounds?.dog ?? '',
+      capybara: value?.backgrounds?.capybara ?? '',
+    },
+  }
 }
 
 function localISODate(date: Date) {
@@ -59,6 +88,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsName, setSettingsName] = useState('')
   const [draftTheme, setDraftTheme] = useState<ThemeId>(DEFAULT_THEME)
+  const [themeCustomizations, setThemeCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
+  const [draftCustomizations, setDraftCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
 
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
@@ -102,6 +133,12 @@ export default function App() {
         setPurchases(await db.purchases.toArray())
         const saved = await getLocalName()
         const savedTheme = await getLocalTheme()
+        const savedCustomizations = await getLocalThemeCustomizations<ThemeCustomizations>()
+        if (savedCustomizations) {
+          const normalized = normalizeThemeCustomizations(savedCustomizations)
+          setThemeCustomizations(normalized)
+          setDraftCustomizations(normalized)
+        }
         setName(saved)
         setSettingsName(saved)
         if (isThemeId(savedTheme)) setTheme(savedTheme)
@@ -174,6 +211,11 @@ export default function App() {
     void setLocalTheme(theme)
   }, [theme])
 
+  useEffect(() => {
+    const background = themeCustomizations.backgrounds[theme]
+    document.documentElement.style.setProperty('--theme-wallpaper', background ? `url(\"${background}\")` : 'none')
+  }, [theme, themeCustomizations])
+
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
   const activeTheme = themeOption(theme)
   const todayCount = tasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
@@ -217,6 +259,9 @@ export default function App() {
     await setLocalName(clean)
     setName(clean)
     await setLocalTheme(draftTheme)
+    const normalized = normalizeThemeCustomizations(draftCustomizations)
+    await setLocalThemeCustomizations(normalized)
+    setThemeCustomizations(normalized)
     if (supabase) {
       try {
         await syncProfile(clean, Intl.DateTimeFormat().resolvedOptions().timeZone, draftTheme)
@@ -233,6 +278,7 @@ export default function App() {
   function openSettings() {
     setSettingsName(name)
     setDraftTheme(theme)
+    setDraftCustomizations(normalizeThemeCustomizations(themeCustomizations))
     setSettingsOpen(true)
   }
 
@@ -508,7 +554,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div><div className="theme-animal-badge" title={`${activeTheme.name} theme`} aria-label={`${activeTheme.name} theme`}>{activeTheme.emoji}</div></div>
+        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={22} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div>{themeCustomizations.stickers[theme][0] ? <img className="theme-sticker-avatar" src={stickerUrl(theme, themeCustomizations.stickers[theme][0])} alt="Selected theme sticker" /> : <div className="theme-animal-badge" aria-hidden="true">{activeTheme.emoji}</div>}</div>
         <div className="header-actions">
           <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => void ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
           <button className="icon-btn" onClick={openSettings} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
@@ -516,9 +562,8 @@ export default function App() {
       </header>
 
       <section className="hero">
-        <div className="theme-ambient" aria-hidden="true">{activeTheme.emoji}</div>
-        <div className="hero-eyebrow"><span className="hero-animal">{activeTheme.emoji}</span><UserRound size={15} /> My space <span className="theme-name-pill">{activeTheme.name} theme</span></div>
-        <h1>{greeting}, {name} 👋</h1>
+        {themeCustomizations.stickers[theme].slice(0, 3).map((file, index) => <img key={file} className={`theme-ambient-sticker sticker-${index + 1}`} src={stickerUrl(theme, file)} alt="" aria-hidden="true" />)}
+        <h1>{greeting}, {name}</h1>
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
         <div className="summary-grid">
           <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small></div>
@@ -652,17 +697,47 @@ export default function App() {
             </section>
 
             <section className="settings-section">
-              <div className="settings-section-title"><Palette size={17} /><div><strong>Theme</strong><span>Choose one of Tandaan's three animal themes.</span></div></div>
+              <div className="settings-section-title"><Palette size={17} /><div><strong>Animal theme</strong><span>Choose an animal theme. Its sticker pack is included automatically.</span></div></div>
               <div className="theme-grid">
                 {THEME_OPTIONS.map(option => (
                   <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
                     <span className="theme-animal-icon" aria-hidden="true">{option.emoji}</span>
-                    <span className="theme-swatch" style={{ background: option.swatch }} aria-hidden="true" />
+                    {draftCustomizations.stickers[option.id][0] ? <img className="theme-choice-sticker" src={stickerUrl(option.id, draftCustomizations.stickers[option.id][0])} alt="" /> : <span className="theme-swatch" style={{ background: option.swatch }} aria-hidden="true" />}
                     <span><strong>{option.name}</strong><small>{option.description}</small></span>
                     {draftTheme === option.id && <CheckCircle2 size={17} />}
                   </button>
                 ))}
               </div>
+            </section>
+
+            <section className="settings-section">
+              <div className="settings-section-title"><Palette size={17} /><div><strong>Personalize {themeOption(draftTheme).name}</strong><span>The {themeOption(draftTheme).name} sticker pack is already included. You only need to choose an optional background.</span></div></div>
+
+              <div className="custom-theme-preview">
+                {draftCustomizations.backgrounds[draftTheme] && <div className="custom-theme-preview-bg" style={{ backgroundImage: `url(\"${draftCustomizations.backgrounds[draftTheme]}\")` }} aria-hidden="true" />}
+                <div className="custom-theme-preview-overlay" aria-hidden="true" />
+                <div className="custom-theme-preview-copy"><strong>{themeOption(draftTheme).emoji} {themeOption(draftTheme).name}</strong><span>Sticker pack included automatically</span></div>
+                <div className="custom-theme-preview-stickers">
+                  {STICKERS[draftTheme].slice(0, 5).map(file => <img key={file} src={stickerUrl(draftTheme, file)} alt="" aria-hidden="true" />)}
+                </div>
+              </div>
+
+              <label className="upload-control">
+                <span><strong>Background</strong><small>{draftCustomizations.backgrounds[draftTheme] ? 'Custom photo selected' : 'Use the default theme background'}</small></span>
+                <input type="file" accept="image/*" onChange={event => {
+                  const file = event.target.files?.[0]
+                  if (!file) return
+                  const reader = new FileReader()
+                  reader.onload = () => {
+                    const value = typeof reader.result === 'string' ? reader.result : ''
+                    if (!value) return
+                    setDraftCustomizations(prev => ({ ...prev, backgrounds: { ...prev.backgrounds, [draftTheme]: value } }))
+                  }
+                  reader.readAsDataURL(file)
+                }} />
+                <span className="secondary file-btn">Choose photo</span>
+              </label>
+              {draftCustomizations.backgrounds[draftTheme] && <button className="text-btn" onClick={() => setDraftCustomizations(prev => ({ ...prev, backgrounds: { ...prev.backgrounds, [draftTheme]: '' } }))}>Remove background</button>}
             </section>
 
             <section className="settings-section">

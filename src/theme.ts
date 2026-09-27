@@ -16,6 +16,16 @@ export const THEME_OPTIONS: ThemeOption[] = [
 
 export const DEFAULT_THEME: ThemeId = 'cat'
 
+export const STICKERS: Record<ThemeId, string[]> = {
+  cat: Array.from({ length: 10 }, (_, i) => `ca${i + 1}.png`),
+  dog: Array.from({ length: 10 }, (_, i) => `do${i + 1}.png`),
+  capybara: Array.from({ length: 10 }, (_, i) => `cap${i + 1}.png`),
+}
+
+export function stickerUrl(theme: ThemeId, filename: string) {
+  return `/stickers/${theme}/${filename}`
+}
+
 export function isThemeId(value: string | null | undefined): value is ThemeId {
   return THEME_OPTIONS.some(option => option.id === value)
 }

@@ -48,6 +48,20 @@ export async function setLocalTheme(theme: string) {
   await db.settings.put({ key: 'theme', value: theme })
 }
 
+export async function getLocalThemeCustomizations<T = unknown>(): Promise<T | null> {
+  const row = await db.settings.get('themeCustomizations')
+  if (!row?.value) return null
+  try {
+    return JSON.parse(row.value) as T
+  } catch {
+    return null
+  }
+}
+
+export async function setLocalThemeCustomizations(value: unknown) {
+  await db.settings.put({ key: 'themeCustomizations', value: JSON.stringify(value) })
+}
+
 export async function queueUpsert(entity: OutboxItem['entity'], payload: OutboxItem['payload']) {
   if (!payload) return
   await db.outbox.add({ entity, operation: 'upsert', recordId: payload.id, payload, createdAt: new Date().toISOString() })

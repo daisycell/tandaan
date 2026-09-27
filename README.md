@@ -79,3 +79,8 @@ Voice now uses a lightweight Vercel Edge endpoint with a direct multipart reques
 
 ## Themes
 Tandaan now includes exactly three animal themes: Cat (purple), Golden Retriever (warm gold), and Capybara (earthy). The selected theme is stored locally and synchronized to the user's profile.
+
+
+## V31 Theme Customization
+
+Tandaan includes three animal themes only: Cat, Golden Retriever, and Capybara. The supplied sticker assets are bundled by theme under `public/stickers/`. Users can select up to six stickers per animal and choose a local photo background for each animal theme from My Profile & Settings. Theme sticker/background choices are device-local for now; the selected base theme remains part of the synced profile.
