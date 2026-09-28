@@ -6,7 +6,7 @@ const normalize = (text: string) => text
   .trim()
 
 export type Intent = 'task' | 'shopping' | 'purchase' | 'note'
-type BinaryIntent = 'shopping' | 'purchase'
+type AmbiguousIntent = 'task' | 'shopping' | 'purchase'
 
 export type ParsedLine = { itemName: string; quantity?: number | null; unit?: string | null; price?: number | null }
 
@@ -19,7 +19,7 @@ export type ParsedInput = {
   shopping?: ParsedLine
   shoppingItems?: ParsedLine[]
   purchases?: ParsedLine[]
-  ambiguous?: { options: BinaryIntent[]; reason: string }
+  ambiguous?: { options: AmbiguousIntent[]; reason: string }
 }
 
 const futureTask = /\b(i['’]?ll|i will|i['’]?m going to|i am going to|later|remind me|due|i need to|need to)\b/i
@@ -188,11 +188,6 @@ function parseShoppingListSegment(segment: string): ParsedLine | null {
   return { itemName: s }
 }
 
-function isKnownShoppingItem(text: string) {
-  const t = normalize(text)
-  return SHOPPING_ITEM_PHRASES.some(phrase => t === phrase)
-}
-
 function hasNumberLikeToken(text: string) {
   return /\b\d+(?:\.\d+)?\b|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|isa|usa|isang|duha|dos|tatlo|tulo|apat|lima|anum|unom|pito|walo|siyam|pulo)\b/i.test(text)
 }
@@ -249,13 +244,13 @@ export function parseInput(text: string): ParsedInput {
       shoppingItems,
       purchases,
       ambiguous: {
-        options: ['shopping', 'purchase'],
-        reason: 'This shortcut contains item names and numbers, but the numbers could be quantities or prices.'
+        options: ['task', 'shopping', 'purchase'],
+        reason: 'This shortcut can be a task, a shopping list, or a purchase. The number may be a quantity or a price.'
       }
     }
   }
 
-  if (shoppingItems.length && (shoppingItems.length >= 2 || isKnownShoppingItem(raw))) {
+  if (shoppingItems.length && shoppingItems.length >= 2 && !hasNumberLikeToken(raw)) {
     return { intent: 'shopping', original: raw, shopping: shoppingItems[0], shoppingItems }
   }
 
@@ -266,7 +261,36 @@ export function parseInput(text: string): ParsedInput {
   if (noteVerb.test(t)) return { intent: 'note', original: raw, title: raw }
 
   const due = extractDueInfo(raw)
-  return { intent: 'task', original: raw, title: due.cleanedTitle || raw, dueDate: due.dueDate ?? null, dueTime: due.dueTime ?? null }
+  const hasActionSignal = taskVerb.test(t) || futureTask.test(t)
+  const hasTimeOrDateSignal = Boolean(due.dueDate || due.dueTime)
+  const hasPriceSignal = hasExplicitMoneyCue(raw)
+
+  if (hasActionSignal || hasTimeOrDateSignal) {
+    return { intent: 'task', original: raw, title: due.cleanedTitle || raw, dueDate: due.dueDate ?? null, dueTime: due.dueTime ?? null }
+  }
+
+  if (!hasPriceSignal && !hasNumberLikeToken(raw)) {
+    return {
+      intent: 'shopping',
+      original: raw,
+      shopping: { itemName: raw },
+      ambiguous: {
+        options: ['task', 'shopping', 'purchase'],
+        reason: 'This looks like an item or short phrase without a clear action, date, time, or price.'
+      }
+    }
+  }
+
+  return {
+    intent: 'shopping',
+    original: raw,
+    shopping: shoppingItems[0] ?? { itemName: raw },
+    shoppingItems: shoppingItems.length ? shoppingItems : [{ itemName: raw }],
+    ambiguous: {
+      options: ['task', 'shopping', 'purchase'],
+      reason: 'This shortcut can be a task, a shopping list item, or a purchase. Choose how you want to save it.'
+    }
+  }
 }
 
 export function detectIntent(text: string): Intent {
