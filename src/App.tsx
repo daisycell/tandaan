@@ -586,6 +586,7 @@ export default function App() {
   async function startVoice() {
     setVoiceError('')
     setVoiceTranscript('')
+    setStatus('Starting voice…')
     setVoiceSeconds(0)
 
     if (voiceState === 'checking-model' || voiceState === 'loading-model' || voiceState === 'transcribing') return
@@ -610,7 +611,7 @@ export default function App() {
         setStatus(`Loading voice model… ${progress}%`)
       })
       if (preparation.cached) setStatus('Voice model ready on this device')
-      else setStatus('Voice model ready · cached on this device')
+      else setStatus('Voice ready · listening now')
       setVoiceProgress(null)
 
       const recorder = await startVoiceCapture(level => setVoiceLevel(level), 12_000)
@@ -737,7 +738,7 @@ export default function App() {
         </div>
         <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model' ? 'voice-btn transcribing' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model'}>
           {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceState === 'recording' ? `Stop · ${voiceSeconds}s` : voiceState === 'checking-model' ? 'Checking voice…' : voiceState === 'loading-model' ? (voiceProgress != null ? `Loading voice · ${voiceProgress}%` : 'Loading voice…') : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
+          {voiceState === 'recording' ? `Listening · ${voiceSeconds}s` : voiceState === 'checking-model' ? 'Checking voice…' : voiceState === 'loading-model' ? (voiceProgress != null ? `Setting up voice · ${voiceProgress}%` : 'Setting up voice…') : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
         {voiceError && <div className="inline-error">{voiceError}</div>}
@@ -813,12 +814,15 @@ export default function App() {
                 <div className="review-block">
                   <div className="review-label">Shortcut input</div>
                   <div className="ambiguity-text">{ambiguousInput.original}</div>
-                  <div className="review-row ambiguity-preview"><span>Shopping list</span><span>{(ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ')}</span></div>
-                  <div className="row-action"><button className="text-btn" onClick={() => beginAmbiguityEdit('shopping')}>Edit list</button></div>
-                  <div className="review-row ambiguity-preview"><span>Purchase</span><span>{(ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ')}</span></div>
-                  <div className="row-action"><button className="text-btn" onClick={() => beginAmbiguityEdit('purchase')}>Edit purchase</button></div>
+                  <button className="intent-choice-card" onClick={() => void chooseAmbiguousIntent('shopping')}>
+                    <span><strong>Shopping list</strong><small>{(ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ') || 'Items to buy'}</small></span>
+                    <span className="intent-arrow">›</span>
+                  </button>
+                  <button className="intent-choice-card" onClick={() => void chooseAmbiguousIntent('purchase')}>
+                    <span><strong>Purchase</strong><small>{(ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ') || 'Items already bought'}</small></span>
+                    <span className="intent-arrow">›</span>
+                  </button>
                 </div>
-                <div className="modal-actions ambiguity-actions"><button className="secondary" onClick={() => void chooseAmbiguousIntent('shopping')}>Shopping list</button><button className="primary" onClick={() => void chooseAmbiguousIntent('purchase')}>Purchase</button></div>
                 <div className="modal-actions ambiguity-secondary-actions"><button className="text-btn" onClick={() => { setInput(ambiguousInput.original); setAmbiguousInput(null) }}>Edit original text</button><button className="text-btn" onClick={() => setAmbiguousInput(null)}>Cancel</button></div>
               </>
             ) : (
@@ -900,7 +904,10 @@ export default function App() {
                 {THEME_OPTIONS.map(option => (
                   <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
                     <span className="theme-swatch" style={{ background: option.swatch }} aria-hidden="true" />
-                    <span><strong>{option.name}</strong><small>{option.description}</small></span>
+                    <span className="theme-choice-stickers" aria-hidden="true">
+                      {STICKERS[option.id].slice(0, 3).map(file => <img key={file} src={stickerUrl(option.id, file)} alt="" />)}
+                    </span>
+                    <span className="theme-choice-copy"><strong>{option.name}</strong><small>{option.description}</small></span>
                     {draftTheme === option.id && <CheckCircle2 size={17} />}
                   </button>
                 ))}

@@ -18,6 +18,7 @@ type WorkerResult = {
   cached?: boolean
   text?: string
   error?: string
+  fatal?: boolean
 }
 
 let transcriber: any = null
@@ -46,9 +47,15 @@ async function loadModel(modelId: WorkerModel, online: boolean, requestId: numbe
     // a cache directory entry.
   }
 
+  const mobile = modelId === 'Xenova/whisper-tiny'
+  const webgpuAvailable = typeof navigator !== 'undefined' && 'gpu' in navigator
+  const useWebGPU = mobile && webgpuAvailable
+  if (!useWebGPU && typeof (env as any).backends?.onnx?.wasm === 'object') {
+    ;(env as any).backends.onnx.wasm.numThreads = 1
+  }
   const createOptions: Record<string, unknown> = {
-    dtype: 'q8',
-    device: 'wasm',
+    dtype: mobile ? (useWebGPU ? 'q4f16' : 'q4') : 'q8',
+    device: useWebGPU ? 'webgpu' : 'wasm',
     progress_callback: (info: any) => {
       if (info?.status === 'progress' && typeof info.progress === 'number') {
         post({ id: requestId, type: 'progress', progress: Math.max(0, Math.min(100, Math.round(info.progress))) })
@@ -64,6 +71,19 @@ async function loadModel(modelId: WorkerModel, online: boolean, requestId: numbe
     post({ id: requestId, type: 'progress', progress: 100 })
     return { cached: false }
   } catch (error) {
+    if (useWebGPU) {
+      try {
+        const fallbackOptions = { ...createOptions, device: 'wasm' as const, dtype: 'q4' as const }
+        if (typeof (env as any).backends?.onnx?.wasm === 'object') (env as any).backends.onnx.wasm.numThreads = 1
+        loadingPromise = pipeline('automatic-speech-recognition', modelId, fallbackOptions)
+        transcriber = await loadingPromise
+        currentModel = modelId
+        post({ id: requestId, type: 'progress', progress: 100 })
+        return { cached: false }
+      } catch (fallbackError) {
+        error = fallbackError
+      }
+    }
     transcriber = null
     currentModel = null
     throw error
@@ -96,7 +116,8 @@ scope.onmessage = async event => {
       task: 'transcribe',
       return_timestamps: false,
       language: undefined,
-      chunk_length_s: 15,
+      chunk_length_s: 5,
+      max_new_tokens: 64,
     })
 
     const text = String(output?.text ?? '').replace(/\s+/g, ' ').trim()
@@ -104,9 +125,13 @@ scope.onmessage = async event => {
     post({ id: message.id, type: 'result', text })
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    transcriber = null
-    currentModel = null
-    loadingPromise = null
-    post({ id: message.id, type: 'error', error: detail })
+    const lower = detail.toLowerCase()
+    const fatal = /out of memory|memory|sassert|assertion|abort|webassembly|wasm|worker stopped|execution.*terminated/.test(lower)
+    if (fatal) {
+      transcriber = null
+      currentModel = null
+      loadingPromise = null
+    }
+    post({ id: message.id, type: 'error', error: detail, fatal })
   }
 }

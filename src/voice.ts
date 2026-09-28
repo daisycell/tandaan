@@ -1,6 +1,7 @@
 let worker: Worker | null = null
 let requestId = 0
 let activeTranscription = false
+let readyModel: ModelId | null = null
 
 const pending = new Map<number, {
   resolve: (value: WorkerResponse) => void
@@ -16,6 +17,7 @@ type WorkerResponse = {
   cached?: boolean
   text?: string
   error?: string
+  fatal?: boolean
 }
 
 type ModelId = 'Xenova/whisper-tiny' | 'Xenova/whisper-base'
@@ -29,6 +31,15 @@ export type VoiceRecorder = {
 export type VoicePhase = 'checking-model' | 'loading-model' | 'recording' | 'transcribing' | 'ready'
 export type VoicePhaseCallback = (phase: VoicePhase) => void
 export type ProgressCallback = (progress: number) => void
+
+class VoiceWorkerError extends Error {
+  fatal: boolean
+  constructor(message: string, fatal = false) {
+    super(message)
+    this.name = 'VoiceWorkerError'
+    this.fatal = fatal
+  }
+}
 
 function isMobileDevice() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -51,7 +62,7 @@ function createWorker() {
     }
     if (request.timer) window.clearTimeout(request.timer)
     pending.delete(message.id)
-    if (message.type === 'error') request.reject(new Error(message.error || 'Voice engine error.'))
+    if (message.type === 'error') request.reject(new VoiceWorkerError(message.error || 'Voice engine error.', Boolean(message.fatal)))
     else request.resolve(message)
   }
   worker.onerror = event => {
@@ -63,6 +74,7 @@ function createWorker() {
     }
     worker?.terminate()
     worker = null
+    readyModel = null
   }
   return worker
 }
@@ -70,6 +82,7 @@ function createWorker() {
 function resetWorker() {
   worker?.terminate()
   worker = null
+  readyModel = null
   for (const [id, request] of pending) {
     if (request.timer) window.clearTimeout(request.timer)
     request.reject(new Error('Voice engine reset.'))
@@ -112,7 +125,7 @@ function preferredMimeType() {
   return types.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) || ''
 }
 
-export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 12_000): Promise<VoiceRecorder> {
+export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 8_000): Promise<VoiceRecorder> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     throw new Error('Microphone recording is not supported on this device.')
   }
@@ -251,6 +264,7 @@ function trimSilence(audio: Float32Array) {
 
 export async function prepareVoice(onProgress?: ProgressCallback) {
   const modelId = chooseModelId()
+  if (readyModel === modelId && worker) return { modelId, cached: true }
   const online = navigator.onLine !== false
   const result = await requestWorker('prepare', modelId, undefined, {
     online,
@@ -258,27 +272,28 @@ export async function prepareVoice(onProgress?: ProgressCallback) {
     onProgress,
   })
   if (result.type !== 'ready') throw new Error('Voice model did not finish loading.')
+  readyModel = modelId
   return { modelId, cached: Boolean(result.cached) }
 }
 
 export async function transcribeVoice(blob: Blob, durationMs: number) {
   if (activeTranscription) throw new Error('Voice is already transcribing. Please wait for it to finish.')
-  if (durationMs < 450) throw new Error('The recording is too short. Try speaking for 2–6 seconds.')
-  if (durationMs > 12_500) throw new Error('Recording was too long. Try a shorter command.')
+  if (durationMs < 450) throw new Error('The recording is too short. Try speaking for 3–6 seconds.')
+  if (durationMs > 8_500) throw new Error('Recording was too long. Try a short 3–6 second command.')
   if (!blob.size) throw new Error('The microphone recording was empty.')
 
   activeTranscription = true
   try {
     const audio = await decodeTo16kMono(blob)
     const modelId = chooseModelId()
-    const result = await requestWorker('transcribe', modelId, audio, { timeoutMs: 45_000 })
+    const result = await requestWorker('transcribe', modelId, audio, { timeoutMs: 18_000 })
     if (result.type !== 'result' || !result.text) throw new Error(result.error || 'Local voice transcription returned no text.')
     return result.text
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Local voice transcription failed.'
-    // A failed/aborted worker is not reused. The next attempt gets a new worker and
-    // reloads the cached model rather than inheriting corrupted WASM state.
-    resetWorker()
+    if (error instanceof VoiceWorkerError && error.fatal) {
+      resetWorker()
+    }
     throw new Error(message)
   } finally {
     activeTranscription = false
