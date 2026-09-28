@@ -1,6 +1,19 @@
 import { db } from './db'
 import { supabase } from './supabase'
+import { requestCaptchaToken, getCaptchaError, clearCaptchaError } from './components/TurnstileWidget'
 import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
+
+let pendingSignInPromise: Promise<string | null> | null = null
+let lastKnownUserId: string | null = null
+let onlineHandlerInstalled = false
+
+if (typeof window !== 'undefined' && !onlineHandlerInstalled) {
+  onlineHandlerInstalled = true
+  window.addEventListener('online', () => {
+    lastKnownUserId = null
+    pendingSignInPromise = null
+  })
+}
 
 function toDbTask(task: Task, userId: string) {
   return { id: task.id, user_id: userId, title: task.title, is_completed: task.isCompleted, due_date: task.dueDate ?? null, due_time: task.dueTime ?? null, reminder_enabled: task.reminderEnabled ?? true, reminder_minutes_before: task.reminderMinutesBefore ?? 1440, reminder_at: task.reminderAt ?? null, reminder_sent_at: task.reminderSentAt ?? null, created_at: task.createdAt, updated_at: task.updatedAt }
@@ -23,11 +36,38 @@ function fromDbPurchase(row: Record<string, unknown>): Purchase {
 
 export async function getUserId() {
   if (!supabase) return null
-  const { data } = await supabase.auth.getSession()
-  if (data.session?.user?.id) return data.session.user.id
-  const { data: signInData, error } = await supabase.auth.signInAnonymously()
-  if (error) throw error
-  return signInData.user?.id ?? null
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session?.user?.id) {
+    lastKnownUserId = session.user.id
+    return session.user.id
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return null
+  if (pendingSignInPromise) return pendingSignInPromise
+  pendingSignInPromise = performAnonymousSignIn()
+  const result = await pendingSignInPromise
+  pendingSignInPromise = null
+  return result
+}
+
+async function performAnonymousSignIn(): Promise<string | null> {
+  const sb = supabase
+  if (!sb) return null
+  try {
+    const token = await requestCaptchaToken()
+    const { data, error } = await sb.auth.signInAnonymously({ options: { captchaToken: token } })
+    if (error) throw error
+    const userId = data.user?.id ?? null
+    lastKnownUserId = userId
+    clearCaptchaError()
+    return userId
+  } catch (error) {
+    pendingSignInPromise = null
+    throw error
+  }
+}
+
+export function getSignInError(): Error | null {
+  return getCaptchaError()
 }
 
 export async function syncProfile(name: string, timezone: string, theme: ThemeId = 'cat') {
