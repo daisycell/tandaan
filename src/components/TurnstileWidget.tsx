@@ -1,26 +1,29 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Turnstile } from '@marsidev/react-turnstile'
 
+const TOKEN_MAX_AGE_MS = 4 * 60 * 1000
+const REQUEST_TIMEOUT_MS = 15000
+
+let lastToken: string | null = null
+let tokenIssuedAt = 0
 let pendingResolve: ((token: string) => void) | null = null
 let pendingReject: ((reason: any) => void) | null = null
 let tokenPromise: Promise<string> | null = null
-let isVerifying = false
-let hasRetried = false
 let captchaError: Error | null = null
-let widgetReady = false
-let executionRequested = false
+let requestActive = false
 let retryTimeout: ReturnType<typeof setTimeout> | null = null
 
-function resetPending(): void {
+let turnstileRefInstance: any = null
+let widgetRendered = false
+
+function clearPending(): void {
   pendingResolve = null
   pendingReject = null
 }
 
 function rejectCurrent(reason: Error): void {
-  resetPending()
-  isVerifying = false
-  hasRetried = false
-  executionRequested = false
+  clearPending()
+  requestActive = false
   if (retryTimeout) { clearTimeout(retryTimeout); retryTimeout = null }
   captchaError = reason
 }
@@ -28,57 +31,39 @@ function rejectCurrent(reason: Error): void {
 export async function requestCaptchaToken(): Promise<string> {
   if (tokenPromise) return tokenPromise
 
-  isVerifying = true
-  hasRetried = false
+  if (lastToken && Date.now() - tokenIssuedAt < TOKEN_MAX_AGE_MS) {
+    const token = lastToken
+    lastToken = null
+    tokenIssuedAt = 0
+    return token
+  }
+
   captchaError = null
-  executionRequested = true
+  requestActive = true
 
   tokenPromise = new Promise<string>((resolve, reject) => {
     pendingResolve = resolve
     pendingReject = reject
   })
 
-  if (widgetReady) {
-    executeWidget()
-  }
+  lastToken = null
+  tokenIssuedAt = 0
+  if (widgetRendered) turnstileRefInstance?.reset()
 
   retryTimeout = setTimeout(() => {
-    if (!isVerifying) return
-    if (!hasRetried) {
-      hasRetried = true
-      executionRequested = true
-      resetPending()
-      tokenPromise = new Promise<string>((resolve, reject) => {
-        pendingResolve = resolve
-        pendingReject = reject
-      })
-      if (widgetReady) {
-        executeWidget()
-      }
-    } else {
-      rejectCurrent(new Error('CAPTCHA verification timed out. Please try again.'))
-    }
-  }, 15000)
+    if (!requestActive) return
+    rejectCurrent(new Error('CAPTCHA verification timed out. Please reload the page and try again.'))
+  }, REQUEST_TIMEOUT_MS)
 
   return tokenPromise
 }
 
-let turnstileRefInstance: any = null
-
-function executeWidget(): void {
-  try {
-    turnstileRefInstance?.execute()
-  } catch {
-    // Widget execute failed — will retry on timeout
-  }
-}
-
 export function resetCaptchaState(): void {
-  isVerifying = false
+  requestActive = false
   tokenPromise = null
-  resetPending()
-  hasRetried = false
-  executionRequested = false
+  clearPending()
+  lastToken = null
+  tokenIssuedAt = 0
   if (retryTimeout) { clearTimeout(retryTimeout); retryTimeout = null }
 }
 
@@ -92,15 +77,12 @@ export function clearCaptchaError(): void {
 
 export function TurnstileWidget() {
   const turnstileRef = useRef<any>(null)
-  const [, setTick] = useState(0)
 
   useEffect(() => {
     turnstileRefInstance = turnstileRef.current
-    widgetReady = true
-    setTick(t => t + 1)
-    if (executionRequested) {
-      executionRequested = false
-      turnstileRef.current?.execute()
+    return () => {
+      turnstileRefInstance = null
+      widgetRendered = false
     }
   }, [])
 
@@ -108,20 +90,35 @@ export function TurnstileWidget() {
     <Turnstile
       siteKey={import.meta.env.VITE_TURNSTILE_SITE_KEY || ''}
       ref={turnstileRef}
-      options={{ execution: 'execute', appearance: 'interaction-only' }}
+      options={{ execution: 'render', appearance: 'interaction-only' }}
+      onLoadScript={() => {
+        if (widgetRendered) return
+        turnstileRefInstance?.render()
+      }}
+      onWidgetLoad={() => {
+        widgetRendered = true
+      }}
       onSuccess={(token: string) => {
         if (!token || !token.trim()) return
-        resetCaptchaState()
-        turnstileRef.current?.reset()
-        pendingResolve?.(token)
+        tokenIssuedAt = Date.now()
+        if (!requestActive) {
+          lastToken = token
+          return
+        }
+        lastToken = null
+        if (retryTimeout) { clearTimeout(retryTimeout); retryTimeout = null }
+        requestActive = false
+        const resolve = pendingResolve
+        tokenPromise = null
+        clearPending()
+        resolve?.(token)
       }}
       onExpire={() => {
-        resetCaptchaState()
+        lastToken = null
+        tokenIssuedAt = 0
       }}
       onError={() => {
-        if (hasRetried && isVerifying) {
-          rejectCurrent(new Error('CAPTCHA verification failed. Please try again.'))
-        }
+        if (requestActive) rejectCurrent(new Error('CAPTCHA verification failed. Please reload the page and try again.'))
       }}
     />
   )
