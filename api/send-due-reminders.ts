@@ -1,5 +1,6 @@
 import webpush from 'web-push'
 import { createClient } from '@supabase/supabase-js'
+import { timingSafeEqual } from 'node:crypto'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -16,9 +17,13 @@ type DueTask = {
 type PushSub = { id: string; endpoint: string; p256dh: string; auth: string }
 
 export default async function handler(req: Request) {
-  if (req.method !== 'POST' && req.method !== 'GET') return Response.json({ error: 'Method not allowed.' }, { status: 405 })
+  if (req.method !== 'POST') return Response.json({ error: 'Method not allowed.' }, { status: 405 })
   const cronSecret = process.env.REMINDER_CRON_SECRET
-  if (cronSecret && req.headers.get('x-cron-secret') !== cronSecret) return Response.json({ error: 'Unauthorized.' }, { status: 401 })
+  if (cronSecret) {
+    const provided = req.headers.get('x-cron-secret') || ''
+    if (provided.length !== cronSecret.length) return Response.json({ error: 'Unauthorized.' }, { status: 401 })
+    if (!timingSafeEqual(Buffer.from(cronSecret), Buffer.from(provided))) return Response.json({ error: 'Unauthorized.' }, { status: 401 })
+  }
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY
@@ -45,7 +50,7 @@ export default async function handler(req: Request) {
     .order('reminder_at', { ascending: true })
     .limit(50)
 
-  if (taskError) return Response.json({ error: taskError.message }, { status: 500 })
+  if (taskError) return Response.json({ error: 'Reminder processing failed.' }, { status: 500 })
 
   let sent = 0
   let removed = 0
