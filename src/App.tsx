@@ -612,18 +612,12 @@ export default function App() {
       })
       setVoiceProgress(null)
 
-      // First successful model preparation is a setup step, not a recording.
-      // This makes the transition explicit and prevents the first tap from racing
-      // model initialization against microphone capture on iOS standalone PWAs.
-      if (!preparation.cached) {
-        setVoiceState('idle')
-        setStatus('Voice ready · tap Speak to record')
-        return
-      }
-
+      // A successful first-time model load continues into recording so the user's
+      // first Speak tap is never a no-op. The model is cached by Transformers.js,
+      // so subsequent taps do not redownload it.
       setStatus('Voice ready · listening now')
 
-      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 6_500)
+      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 6_000)
       recorderRef.current = recorder
       setVoiceState('recording')
       setStatus('Listening… tap Stop when you finish')
