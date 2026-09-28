@@ -3,6 +3,12 @@ let requestId = 0
 let activeTranscription = false
 let readyModel: ModelId | null = null
 
+const VOICE_DIAGNOSTIC_PREFIX = '[Tandaan Voice]'
+const voiceDiagnosticNow = () => Math.round(performance.now())
+const voiceDiagnostic = (event: string, details: Record<string, unknown> = {}) => {
+  console.info(VOICE_DIAGNOSTIC_PREFIX, event, { tMs: voiceDiagnosticNow(), ...details })
+}
+
 const pending = new Map<number, {
   resolve: (value: WorkerResponse) => void
   reject: (reason?: unknown) => void
@@ -28,8 +34,6 @@ export type VoiceRecorder = {
   cancel: () => void
   finished: Promise<VoiceCaptureResult>
 }
-export type VoicePhase = 'checking-model' | 'loading-model' | 'recording' | 'transcribing' | 'ready'
-export type VoicePhaseCallback = (phase: VoicePhase) => void
 export type ProgressCallback = (progress: number) => void
 
 class VoiceWorkerError extends Error {
@@ -49,24 +53,41 @@ function chooseModelId(): ModelId {
   return isMobileDevice() ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-base'
 }
 
+async function pageHasWebGPU() {
+  if (!isMobileDevice()) return true
+  const gpu = (navigator as Navigator & { gpu?: { requestAdapter?: () => Promise<unknown> } }).gpu
+  if (!gpu?.requestAdapter) return false
+  try {
+    return Boolean(await gpu.requestAdapter())
+  } catch {
+    return false
+  }
+}
+
 function createWorker() {
   if (worker) return worker
+  const createdAt = voiceDiagnosticNow()
+  voiceDiagnostic('worker-start', { createdAtMs: createdAt })
   worker = new Worker(new URL('./voiceWorker.ts', import.meta.url), { type: 'module' })
   worker.onmessage = event => {
     const message = event.data as WorkerResponse
     const request = pending.get(message.id)
     if (!request) return
     if (message.type === 'progress') {
+      if (message.progress === 100) voiceDiagnostic('worker-progress-100', { id: message.id, type: message.type })
       request.onProgress?.(message.progress ?? 0)
       return
     }
     if (request.timer) window.clearTimeout(request.timer)
     pending.delete(message.id)
+    if (message.type === 'ready') voiceDiagnostic('model-ready', { id: message.id, cached: message.cached ?? false })
+    if (message.type === 'result') voiceDiagnostic('inference-result', { id: message.id, textLength: message.text?.length ?? 0 })
     if (message.type === 'error') request.reject(new VoiceWorkerError(message.error || 'Voice engine error.', Boolean(message.fatal)))
     else request.resolve(message)
   }
   worker.onerror = event => {
-    const error = new Error(event.message || 'Voice engine stopped unexpectedly.')
+    const error = new VoiceWorkerError(event.message || 'Voice engine stopped unexpectedly.', true)
+    voiceDiagnostic('worker-error', { message: error.message })
     for (const [id, request] of pending) {
       if (request.timer) window.clearTimeout(request.timer)
       request.reject(error)
@@ -85,7 +106,7 @@ function resetWorker() {
   readyModel = null
   for (const [id, request] of pending) {
     if (request.timer) window.clearTimeout(request.timer)
-    request.reject(new Error('Voice engine reset.'))
+    request.reject(new VoiceWorkerError('Voice engine reset.', true))
     pending.delete(id)
   }
 }
@@ -94,7 +115,7 @@ function requestWorker(
   type: 'prepare' | 'transcribe',
   modelId: ModelId,
   payload?: Float32Array,
-  opts?: { onProgress?: (progress: number) => void; timeoutMs?: number; online?: boolean },
+  opts?: { onProgress?: (progress: number) => void; timeoutMs?: number; online?: boolean; webgpuAvailable?: boolean },
 ) {
   const id = ++requestId
   return new Promise<WorkerResponse>((resolve, reject) => {
@@ -102,15 +123,19 @@ function requestWorker(
     if (opts?.timeoutMs) {
       request.timer = window.setTimeout(() => {
         pending.delete(id)
+        voiceDiagnostic('timeout', { requestId: id, type, timeoutMs: opts.timeoutMs })
         resetWorker()
-        reject(new Error('Local voice transcription timed out.'))
+        const message = type === 'prepare'
+          ? 'Local voice model setup timed out. Please try again.'
+          : 'Local voice transcription timed out. Please try a shorter command.'
+        reject(new VoiceWorkerError(message, true))
       }, opts.timeoutMs)
     }
     pending.set(id, request)
     try {
       const message = type === 'prepare'
-        ? { id, type, modelId, online: opts?.online !== false }
-        : { id, type, modelId, audio: payload }
+        ? { id, type, modelId, online: opts?.online !== false, webgpuAvailable: opts?.webgpuAvailable !== false }
+        : { id, type, modelId, online: opts?.online !== false, webgpuAvailable: opts?.webgpuAvailable !== false, audio: payload }
       createWorker().postMessage(message, payload ? [payload.buffer] : [])
     } catch (error) {
       pending.delete(id)
@@ -147,8 +172,6 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
     rejectFinished = reject
   })
 
-  // Capture itself intentionally uses MediaRecorder only. We don't create an AudioContext
-  // during recording, reducing standalone-PWA audio lifecycle problems on iOS.
   const cleanup = () => {
     window.clearTimeout(timer)
     window.clearInterval(levelTimer)
@@ -160,7 +183,8 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
     if (settled) return finished
     settled = true
     recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' })
+      const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/mp4' })
+      voiceDiagnostic('recording-blob', { sizeBytes: blob.size, durationMs: Math.round(performance.now() - startedAt), mimeType: blob.type })
       cleanup()
       resolveFinished({ blob, durationMs: Math.round(performance.now() - startedAt) })
     }
@@ -198,8 +222,8 @@ export async function startVoiceCapture(onLevel?: (level: number) => void, maxDu
   }
 
   recorder.start(250)
+  voiceDiagnostic('recording-start', { mimeType: recorder.mimeType || mimeType || 'unknown', maxDurationMs })
   timer = window.setTimeout(() => { void finish() }, maxDurationMs)
-  // Keep the visual meter alive without touching the recorded audio path.
   levelTimer = window.setInterval(() => onLevel?.(0.18), 120)
 
   finished.finally(() => {
@@ -266,13 +290,20 @@ export async function prepareVoice(onProgress?: ProgressCallback) {
   const modelId = chooseModelId()
   if (readyModel === modelId && worker) return { modelId, cached: true }
   const online = navigator.onLine !== false
+  const webgpuAvailable = await pageHasWebGPU()
+  if (isMobileDevice() && !webgpuAvailable) {
+    throw new Error('On-device voice is unavailable on this iPhone because WebGPU is not available. Tandaan will not load the heavy WASM engine.')
+  }
+  voiceDiagnostic('model-load-start', { modelId, online, webgpuAvailable })
   const result = await requestWorker('prepare', modelId, undefined, {
     online,
-    timeoutMs: online ? 120_000 : 30_000,
+    webgpuAvailable,
+    timeoutMs: online ? 90_000 : 45_000,
     onProgress,
   })
   if (result.type !== 'ready') throw new Error('Voice model did not finish loading.')
   readyModel = modelId
+  voiceDiagnostic('model-load-complete', { modelId, cached: Boolean(result.cached) })
   return { modelId, cached: Boolean(result.cached) }
 }
 
@@ -284,16 +315,23 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
 
   activeTranscription = true
   try {
+    const decodeStartedAt = voiceDiagnosticNow()
     const audio = await decodeTo16kMono(blob)
+    voiceDiagnostic('audio-decoded', { durationMs, blobSizeBytes: blob.size, samples: audio.length, decodeMs: voiceDiagnosticNow() - decodeStartedAt })
     const modelId = chooseModelId()
-    const result = await requestWorker('transcribe', modelId, audio, { timeoutMs: 18_000 })
+    const webgpuAvailable = await pageHasWebGPU()
+    if (isMobileDevice() && !webgpuAvailable) throw new Error('On-device voice is unavailable because WebGPU is no longer available on this phone.')
+    voiceDiagnostic('inference-start', { modelId, samples: audio.length, durationMs })
+    const result = await requestWorker('transcribe', modelId, audio, {
+      online: navigator.onLine !== false,
+      webgpuAvailable,
+      timeoutMs: 35_000,
+    })
     if (result.type !== 'result' || !result.text) throw new Error(result.error || 'Local voice transcription returned no text.')
     return result.text
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Local voice transcription failed.'
-    if (error instanceof VoiceWorkerError && error.fatal) {
-      resetWorker()
-    }
+    if (error instanceof VoiceWorkerError && error.fatal) resetWorker()
     throw new Error(message)
   } finally {
     activeTranscription = false

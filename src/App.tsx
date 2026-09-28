@@ -4,7 +4,8 @@ import { db, getLocalName, getLocalTheme, getLocalThemeCustomizations, queueDele
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { parseInput, type ParsedInput, type ParsedLine } from './parser'
 import { supabase } from './supabase'
-import { getRemoteProfile, getUserId, syncAll, syncProfile } from './sync'
+import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError } from './sync'
+import { TurnstileWidget } from './components/TurnstileWidget'
 import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
 import { prepareVoice, startVoiceCapture, transcribeVoice, cancelVoiceEngine, type VoiceRecorder } from './voice'
@@ -126,9 +127,8 @@ export default function App() {
   const [displayThemeStickers, setDisplayThemeStickers] = useState<string[]>(() => STICKERS[DEFAULT_THEME].slice(0, 3))
   const [ambiguousInput, setAmbiguousInput] = useState<ParsedInput | null>(null)
   const [ambiguityEditMode, setAmbiguityEditMode] = useState<'shopping' | 'purchase' | null>(null)
+  const [savingAmbiguity, setSavingAmbiguity] = useState(false)
   const [ambiguityDraftLines, setAmbiguityDraftLines] = useState<ParsedLine[]>([])
-  const [ambiguitySaving, setAmbiguitySaving] = useState(false)
-  const ambiguitySavingRef = useRef(false)
 
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
@@ -162,10 +162,12 @@ export default function App() {
   const [voiceTranscript, setVoiceTranscript] = useState('')
   const [voiceReview, setVoiceReview] = useState<ParsedInput | null>(null)
   const recorderRef = useRef<VoiceRecorder | null>(null)
+  const ambiguitySaveLockRef = useRef(false)
 
-  const [remindersEnabled, setRemindersEnabled] = useState(false)
+const [remindersEnabled, setRemindersEnabled] = useState(false)
+   const signInError = getSignInError()
 
-  useEffect(() => {
+   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
@@ -386,7 +388,7 @@ export default function App() {
     void syncNow(message)
   }
 
-  async function saveParsed(parsed: ParsedInput, forcedIntent?: 'shopping' | 'purchase') {
+  async function saveParsed(parsed: ParsedInput, forcedIntent?: 'task' | 'shopping' | 'purchase') {
     if (parsed.ambiguous && !forcedIntent) {
       setAmbiguousInput(parsed)
       return false
@@ -438,7 +440,7 @@ export default function App() {
     const raw = input.trim()
     if (!raw) return
     const parsed = parseInput(raw)
-    if (!parsed.ambiguous) setInput('')
+    setInput('')
     await saveParsed(parsed)
   }
 
@@ -607,24 +609,15 @@ export default function App() {
     try {
       setVoiceState('checking-model')
       setStatus('Checking voice on this device…')
-      const preparation = await prepareVoice(progress => {
+      await prepareVoice(progress => {
         setVoiceState('loading-model')
         setVoiceProgress(progress)
         setStatus(`Loading voice model… ${progress}%`)
       })
       setVoiceProgress(null)
-
-      // First successful model preparation is a setup step, not a recording.
-      // This makes the transition explicit and prevents the first tap from racing
-      // model initialization against microphone capture on iOS standalone PWAs.
-      if (!preparation.cached) {
-        setVoiceState('idle')
-        setStatus('Voice ready · tap Speak to record')
-        return
-      }
-
       setStatus('Voice ready · listening now')
 
+      // The same Speak tap continues into recording after model preparation.
       const recorder = await startVoiceCapture(level => setVoiceLevel(level), 6_500)
       recorderRef.current = recorder
       setVoiceState('recording')
@@ -640,8 +633,10 @@ export default function App() {
     } catch (error) {
       cancelVoiceEngine()
       setVoiceError(error instanceof Error ? error.message : 'Could not start voice on this device.')
+      setStatus('Voice is ready to try again')
       setVoiceState('idle')
       setVoiceLevel(0)
+      setVoiceProgress(null)
       recorderRef.current = null
     }
   }
@@ -657,22 +652,19 @@ export default function App() {
     if (saved && !duePrompt) setVoiceReview(null)
   }
 
-  async function chooseAmbiguousIntent(intent: 'shopping' | 'purchase') {
-    if (!ambiguousInput || ambiguitySaving || ambiguitySavingRef.current) return
-    ambiguitySavingRef.current = true
-    setAmbiguitySaving(true)
-    const original = ambiguousInput.original
-    setInput('')
+  async function chooseAmbiguousIntent(intent: 'task' | 'shopping' | 'purchase') {
+    if (!ambiguousInput || ambiguitySaveLockRef.current) return
+    ambiguitySaveLockRef.current = true
+    setSavingAmbiguity(true)
+    const pending = ambiguousInput
     setAmbiguousInput(null)
     setAmbiguityEditMode(null)
     setAmbiguityDraftLines([])
     try {
-      await saveParsed({ ...ambiguousInput, original }, intent)
-    } catch (error) {
-      setStatus(error instanceof Error ? `Could not save ${intent} · try again` : `Could not save ${intent} · try again`)
+      await saveParsed(pending, intent)
     } finally {
-      ambiguitySavingRef.current = false
-      setAmbiguitySaving(false)
+      ambiguitySaveLockRef.current = false
+      setSavingAmbiguity(false)
     }
   }
 
@@ -727,8 +719,8 @@ export default function App() {
         <p>Your offline-first everyday memory.</p>
         <label>What should we call you?</label>
         <input autoFocus value={draftName} onChange={e => setDraftName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') completeOnboarding() }} placeholder="Your name" />
-        <button className="primary" onClick={completeOnboarding}><Sparkles size={18} /> Continue</button>
-      </main>
+         <button className="primary" onClick={completeOnboarding}><Sparkles size={18} /> Continue</button>
+     </main>
     )
   }
 
@@ -746,9 +738,9 @@ export default function App() {
         <h1>{greeting}, {name}</h1>
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
         <div className="summary-grid">
-          <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small>{displayThemeStickers[0] && <img className="summary-card-sticker summary-card-sticker-larger sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}</div>
-          <div className="summary-card card"><span>Shopping</span><strong>{shopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small>{displayThemeStickers[1] && <img className="summary-card-sticker summary-card-sticker-larger sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}</div>
-          <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small>{displayThemeStickers[2] && <img className="summary-card-sticker summary-card-sticker-larger sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small>{displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Shopping</span><strong>{shopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small>{displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small>{displayThemeStickers[2] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}</div>
         </div>
       </section>
 
@@ -764,6 +756,7 @@ export default function App() {
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
         {voiceError && <div className="inline-error">{voiceError}</div>}
+        {signInError && <div className="inline-error">{signInError.message}</div>}
       </section>
 
       <section className="section-block">
@@ -836,16 +829,22 @@ export default function App() {
                 <div className="review-block">
                   <div className="review-label">Shortcut input</div>
                   <div className="ambiguity-text">{ambiguousInput.original}</div>
-                  <button className="intent-choice-card" onClick={() => void chooseAmbiguousIntent('shopping')} disabled={ambiguitySaving} aria-disabled={ambiguitySaving}>
-                    <span><strong>Shopping list</strong><small>{(ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ') || 'Items to buy'}</small></span>
-                    <span className="intent-add-label">{ambiguitySaving ? 'Saving…' : 'Add'}</span>
-                  </button>
-                  <button className="intent-choice-card" onClick={() => void chooseAmbiguousIntent('purchase')} disabled={ambiguitySaving} aria-disabled={ambiguitySaving}>
-                    <span><strong>Purchase</strong><small>{(ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ') || 'Items already bought'}</small></span>
-                    <span className="intent-add-label">{ambiguitySaving ? 'Saving…' : 'Add'}</span>
-                  </button>
+                  {(ambiguousInput.ambiguous?.options ?? ['task', 'shopping', 'purchase']).map(option => {
+                    const title = option === 'task' ? 'Task' : option === 'shopping' ? 'Shopping list' : 'Purchase'
+                    const detail = option === 'task'
+                      ? `Save “${ambiguousInput.original}” as a task`
+                      : option === 'shopping'
+                        ? ((ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ') || 'Items to buy')
+                        : ((ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ') || 'Items already bought')
+                    return (
+                      <button key={option} className="intent-choice-card" onClick={() => void chooseAmbiguousIntent(option)} disabled={savingAmbiguity}>
+                        <span><strong>{title}</strong><small>{detail}</small></span>
+                        <span className="intent-add-label">{savingAmbiguity ? 'Saving…' : 'Add'}</span>
+                      </button>
+                    )
+                  })}
                 </div>
-                <div className="modal-actions ambiguity-secondary-actions"><button className="text-btn" onClick={() => { setInput(ambiguousInput.original); setAmbiguousInput(null); setAmbiguityEditMode(null); setAmbiguityDraftLines([]) }}>Edit original text</button><button className="text-btn" onClick={() => setAmbiguousInput(null)}>Cancel</button></div>
+                <div className="modal-actions ambiguity-secondary-actions"><button className="text-btn" onClick={() => { setInput(ambiguousInput.original); setAmbiguousInput(null) }}>Edit original text</button><button className="text-btn" onClick={() => setAmbiguousInput(null)}>Cancel</button></div>
               </>
             ) : (
               <>
@@ -989,6 +988,7 @@ export default function App() {
       {editingPurchase && (
         <div className="modal-backdrop"><div className="modal card"><div className="modal-header"><strong>Edit purchase</strong><button className="icon-btn" onClick={() => setEditingPurchase(null)}><X /></button></div><label>Item</label><input value={editPurchaseName} onChange={e => setEditPurchaseName(e.target.value)} /><div className="two-col"><div><label>Quantity</label><input type="number" min="0" step="0.001" value={editPurchaseQty} onChange={e => setEditPurchaseQty(e.target.value)} /></div><div><label>Unit</label><input value={editPurchaseUnit} onChange={e => setEditPurchaseUnit(e.target.value)} placeholder="kg, tray, pcs" /></div></div><label>Price (optional)</label><input type="number" min="0" step="0.01" value={editPurchasePrice} onChange={e => setEditPurchasePrice(e.target.value)} /><div className="modal-actions"><button className="secondary" onClick={() => setEditingPurchase(null)}>Cancel</button><button className="primary" onClick={() => void savePurchaseEdit()}>Save changes</button></div></div></div>
       )}
+      <TurnstileWidget />
     </main>
   )
 }
