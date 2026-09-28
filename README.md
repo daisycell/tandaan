@@ -41,3 +41,8 @@ npm install
 npm run dev
 npm run build
 ```
+
+
+## v45 voice behavior
+
+The first Speak tap only prepares the cached local voice model. Once the model is ready, the user taps Speak again to record. Mobile uses the quantized whisper-tiny model and prefers WebGPU when available, falling back to single-threaded WASM. Voice recordings are intentionally short (about 6.5 seconds).

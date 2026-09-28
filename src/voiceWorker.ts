@@ -4,7 +4,7 @@ env.useBrowserCache = true
 env.allowRemoteModels = true
 env.allowLocalModels = false
 
-type WorkerModel = 'Xenova/whisper-tiny' | 'Xenova/whisper-base'
+type WorkerModel = 'onnx-community/whisper-tiny' | 'onnx-community/whisper-base'
 
 type WorkerMessage =
   | { id: number; type: 'prepare'; modelId: WorkerModel; online: boolean }
@@ -24,6 +24,7 @@ type WorkerResult = {
 let transcriber: any = null
 let currentModel: WorkerModel | null = null
 let loadingPromise: Promise<any> | null = null
+let transcribingNow = false
 
 const scope = self as unknown as {
   postMessage: (message: WorkerResult) => void
@@ -47,9 +48,16 @@ async function loadModel(modelId: WorkerModel, online: boolean, requestId: numbe
     // a cache directory entry.
   }
 
-  const mobile = modelId === 'Xenova/whisper-tiny'
-  const webgpuAvailable = typeof navigator !== 'undefined' && 'gpu' in navigator
-  const useWebGPU = mobile && webgpuAvailable
+  const mobile = modelId === 'onnx-community/whisper-tiny'
+  let useWebGPU = false
+  if (mobile && typeof navigator !== 'undefined' && 'gpu' in navigator) {
+    try {
+      const adapter = await (navigator as Navigator & { gpu?: { requestAdapter?: () => Promise<unknown> } }).gpu?.requestAdapter?.()
+      useWebGPU = Boolean(adapter)
+    } catch {
+      useWebGPU = false
+    }
+  }
   if (!useWebGPU && typeof (env as any).backends?.onnx?.wasm === 'object') {
     ;(env as any).backends.onnx.wasm.numThreads = 1
   }
@@ -99,6 +107,7 @@ scope.onmessage = async event => {
       transcriber = null
       currentModel = null
       loadingPromise = null
+      transcribingNow = false
       return
     }
 
@@ -109,6 +118,8 @@ scope.onmessage = async event => {
     }
 
     if (!message.audio?.length) throw new Error('The recorded audio was empty.')
+    if (transcribingNow) throw new Error('Voice is still processing the previous recording. Please wait a moment.')
+    transcribingNow = true
     await loadModel(message.modelId, navigator.onLine !== false, message.id)
     if (!transcriber) throw new Error('Voice engine is not ready.')
 
@@ -116,13 +127,13 @@ scope.onmessage = async event => {
       task: 'transcribe',
       return_timestamps: false,
       language: undefined,
-      chunk_length_s: 5,
-      max_new_tokens: 64,
+      max_new_tokens: 48,
     })
 
     const text = String(output?.text ?? '').replace(/\s+/g, ' ').trim()
     if (!text) throw new Error('No speech was recognized. Try a short, clear command.')
     post({ id: message.id, type: 'result', text })
+    transcribingNow = false
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     const lower = detail.toLowerCase()
@@ -132,6 +143,7 @@ scope.onmessage = async event => {
       currentModel = null
       loadingPromise = null
     }
+    transcribingNow = false
     post({ id: message.id, type: 'error', error: detail, fatal })
   }
 }

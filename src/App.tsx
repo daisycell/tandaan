@@ -610,11 +610,20 @@ export default function App() {
         setVoiceProgress(progress)
         setStatus(`Loading voice model… ${progress}%`)
       })
-      if (preparation.cached) setStatus('Voice model ready on this device')
-      else setStatus('Voice ready · listening now')
       setVoiceProgress(null)
 
-      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 12_000)
+      // First successful model preparation is a setup step, not a recording.
+      // This makes the transition explicit and prevents the first tap from racing
+      // model initialization against microphone capture on iOS standalone PWAs.
+      if (!preparation.cached) {
+        setVoiceState('idle')
+        setStatus('Voice ready · tap Speak to record')
+        return
+      }
+
+      setStatus('Voice ready · listening now')
+
+      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 6_500)
       recorderRef.current = recorder
       setVoiceState('recording')
       setStatus('Listening… tap Stop when you finish')
@@ -903,10 +912,7 @@ export default function App() {
               <div className="theme-grid">
                 {THEME_OPTIONS.map(option => (
                   <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
-                    <span className="theme-swatch" style={{ background: option.swatch }} aria-hidden="true" />
-                    <span className="theme-choice-stickers" aria-hidden="true">
-                      {STICKERS[option.id].slice(0, 3).map(file => <img key={file} src={stickerUrl(option.id, file)} alt="" />)}
-                    </span>
+                    <img className="theme-choice-sticker" src={stickerUrl(option.id, STICKERS[option.id][0])} alt="" aria-hidden="true" />
                     <span className="theme-choice-copy"><strong>{option.name}</strong><small>{option.description}</small></span>
                     {draftTheme === option.id && <CheckCircle2 size={17} />}
                   </button>
@@ -922,7 +928,7 @@ export default function App() {
                 <div className="custom-theme-preview-overlay" aria-hidden="true" />
                 <div className="custom-theme-preview-copy"><strong>{themeOption(draftTheme).name}</strong><span>Sticker pack included automatically</span></div>
                 <div className="custom-theme-preview-stickers">
-                  {STICKERS[draftTheme].slice(0, 5).map(file => <img key={file} src={stickerUrl(draftTheme, file)} alt="" aria-hidden="true" />)}
+                  {STICKERS[draftTheme].slice(0, 1).map(file => <img key={file} src={stickerUrl(draftTheme, file)} alt="" aria-hidden="true" />)}
                 </div>
               </div>
 

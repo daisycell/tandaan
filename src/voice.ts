@@ -20,7 +20,7 @@ type WorkerResponse = {
   fatal?: boolean
 }
 
-type ModelId = 'Xenova/whisper-tiny' | 'Xenova/whisper-base'
+type ModelId = 'onnx-community/whisper-tiny' | 'onnx-community/whisper-base'
 
 export type VoiceCaptureResult = { blob: Blob; durationMs: number }
 export type VoiceRecorder = {
@@ -46,7 +46,7 @@ function isMobileDevice() {
 }
 
 function chooseModelId(): ModelId {
-  return isMobileDevice() ? 'Xenova/whisper-tiny' : 'Xenova/whisper-base'
+  return isMobileDevice() ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-base'
 }
 
 function createWorker() {
@@ -125,7 +125,7 @@ function preferredMimeType() {
   return types.find(type => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) || ''
 }
 
-export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 8_000): Promise<VoiceRecorder> {
+export async function startVoiceCapture(onLevel?: (level: number) => void, maxDurationMs = 6_500): Promise<VoiceRecorder> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     throw new Error('Microphone recording is not supported on this device.')
   }
@@ -279,7 +279,7 @@ export async function prepareVoice(onProgress?: ProgressCallback) {
 export async function transcribeVoice(blob: Blob, durationMs: number) {
   if (activeTranscription) throw new Error('Voice is already transcribing. Please wait for it to finish.')
   if (durationMs < 450) throw new Error('The recording is too short. Try speaking for 3–6 seconds.')
-  if (durationMs > 8_500) throw new Error('Recording was too long. Try a short 3–6 second command.')
+  if (durationMs > 7_000) throw new Error('Recording was too long. Try a short 3–6 second command.')
   if (!blob.size) throw new Error('The microphone recording was empty.')
 
   activeTranscription = true
