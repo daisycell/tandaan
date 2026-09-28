@@ -46,6 +46,3 @@ npm run build
 ## v45 voice behavior
 
 The first Speak tap only prepares the cached local voice model. Once the model is ready, the user taps Speak again to record. Mobile uses the quantized whisper-tiny model and prefers WebGPU when available, falling back to single-threaded WASM. Voice recordings are intentionally short (about 6.5 seconds).
-
-
-Voice stability update: mobile local voice uses the 2.15.1 Transformers.js stack and multilingual Xenova/whisper-tiny quantized model; the first Speak action loads the cached model and proceeds directly into recording.

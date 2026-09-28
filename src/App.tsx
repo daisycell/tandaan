@@ -127,6 +127,8 @@ export default function App() {
   const [ambiguousInput, setAmbiguousInput] = useState<ParsedInput | null>(null)
   const [ambiguityEditMode, setAmbiguityEditMode] = useState<'shopping' | 'purchase' | null>(null)
   const [ambiguityDraftLines, setAmbiguityDraftLines] = useState<ParsedLine[]>([])
+  const [ambiguitySaving, setAmbiguitySaving] = useState(false)
+  const ambiguitySavingRef = useRef(false)
 
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
@@ -436,7 +438,7 @@ export default function App() {
     const raw = input.trim()
     if (!raw) return
     const parsed = parseInput(raw)
-    setInput('')
+    if (!parsed.ambiguous) setInput('')
     await saveParsed(parsed)
   }
 
@@ -612,12 +614,18 @@ export default function App() {
       })
       setVoiceProgress(null)
 
-      // A successful first-time model load continues into recording so the user's
-      // first Speak tap is never a no-op. The model is cached by Transformers.js,
-      // so subsequent taps do not redownload it.
+      // First successful model preparation is a setup step, not a recording.
+      // This makes the transition explicit and prevents the first tap from racing
+      // model initialization against microphone capture on iOS standalone PWAs.
+      if (!preparation.cached) {
+        setVoiceState('idle')
+        setStatus('Voice ready · tap Speak to record')
+        return
+      }
+
       setStatus('Voice ready · listening now')
 
-      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 6_000)
+      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 6_500)
       recorderRef.current = recorder
       setVoiceState('recording')
       setStatus('Listening… tap Stop when you finish')
@@ -650,11 +658,22 @@ export default function App() {
   }
 
   async function chooseAmbiguousIntent(intent: 'shopping' | 'purchase') {
-    if (!ambiguousInput) return
-    await saveParsed(ambiguousInput, intent)
+    if (!ambiguousInput || ambiguitySaving || ambiguitySavingRef.current) return
+    ambiguitySavingRef.current = true
+    setAmbiguitySaving(true)
+    const original = ambiguousInput.original
+    setInput('')
     setAmbiguousInput(null)
     setAmbiguityEditMode(null)
     setAmbiguityDraftLines([])
+    try {
+      await saveParsed({ ...ambiguousInput, original }, intent)
+    } catch (error) {
+      setStatus(error instanceof Error ? `Could not save ${intent} · try again` : `Could not save ${intent} · try again`)
+    } finally {
+      ambiguitySavingRef.current = false
+      setAmbiguitySaving(false)
+    }
   }
 
   function beginAmbiguityEdit(intent: 'shopping' | 'purchase') {
@@ -727,9 +746,9 @@ export default function App() {
         <h1>{greeting}, {name}</h1>
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
         <div className="summary-grid">
-          <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small>{displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}</div>
-          <div className="summary-card card"><span>Shopping</span><strong>{shopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small>{displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}</div>
-          <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small>{displayThemeStickers[2] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small>{displayThemeStickers[0] && <img className="summary-card-sticker summary-card-sticker-larger sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Shopping</span><strong>{shopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small>{displayThemeStickers[1] && <img className="summary-card-sticker summary-card-sticker-larger sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small>{displayThemeStickers[2] && <img className="summary-card-sticker summary-card-sticker-larger sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}</div>
         </div>
       </section>
 
@@ -817,16 +836,16 @@ export default function App() {
                 <div className="review-block">
                   <div className="review-label">Shortcut input</div>
                   <div className="ambiguity-text">{ambiguousInput.original}</div>
-                  <button className="intent-choice-card" onClick={() => void chooseAmbiguousIntent('shopping')}>
+                  <button className="intent-choice-card" onClick={() => void chooseAmbiguousIntent('shopping')} disabled={ambiguitySaving} aria-disabled={ambiguitySaving}>
                     <span><strong>Shopping list</strong><small>{(ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ') || 'Items to buy'}</small></span>
-                    <span className="intent-arrow">›</span>
+                    <span className="intent-add-label">{ambiguitySaving ? 'Saving…' : 'Add'}</span>
                   </button>
-                  <button className="intent-choice-card" onClick={() => void chooseAmbiguousIntent('purchase')}>
+                  <button className="intent-choice-card" onClick={() => void chooseAmbiguousIntent('purchase')} disabled={ambiguitySaving} aria-disabled={ambiguitySaving}>
                     <span><strong>Purchase</strong><small>{(ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ') || 'Items already bought'}</small></span>
-                    <span className="intent-arrow">›</span>
+                    <span className="intent-add-label">{ambiguitySaving ? 'Saving…' : 'Add'}</span>
                   </button>
                 </div>
-                <div className="modal-actions ambiguity-secondary-actions"><button className="text-btn" onClick={() => { setInput(ambiguousInput.original); setAmbiguousInput(null) }}>Edit original text</button><button className="text-btn" onClick={() => setAmbiguousInput(null)}>Cancel</button></div>
+                <div className="modal-actions ambiguity-secondary-actions"><button className="text-btn" onClick={() => { setInput(ambiguousInput.original); setAmbiguousInput(null); setAmbiguityEditMode(null); setAmbiguityDraftLines([]) }}>Edit original text</button><button className="text-btn" onClick={() => setAmbiguousInput(null)}>Cancel</button></div>
               </>
             ) : (
               <>

@@ -647,3 +647,16 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .custom-theme-preview-stickers { inset:auto 10px 8px 10px !important; }
   .custom-theme-preview-stickers img { width:46px !important; height:46px !important; }
 }
+
+/* Minimal interaction polish: ambiguity choices + swipe deletion + stat sticker size. */
+.intent-choice-card:disabled { opacity:.72; cursor:default; }
+.intent-add-label { flex:0 0 auto; color:var(--accent); font-size:11px; font-weight:850; letter-spacing:.02em; }
+
+.swipe-shell { max-height:1000px; opacity:1; transition:max-height .18s ease, opacity .18s ease, margin .18s ease; }
+.swipe-shell.deleting { max-height:0; opacity:0; margin-block:0; }
+.swipe-content { will-change:transform; }
+
+.summary-card-sticker { width:32px !important; height:32px !important; }
+@media (max-width:620px) {
+  .summary-card-sticker { width:27px !important; height:27px !important; }
+}
