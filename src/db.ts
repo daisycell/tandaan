@@ -10,6 +10,8 @@ type OutboxItem = {
   recordId: string
   payload?: Task | ShoppingItem | Purchase
   createdAt: string
+  retryCount?: number
+  flagged?: boolean
 }
 
 class TandaanDB extends Dexie {
