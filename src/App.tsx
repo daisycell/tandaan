@@ -927,8 +927,8 @@ export default function App() {
                 {draftCustomizations.backgrounds[draftTheme] && <div className="custom-theme-preview-bg" style={{ backgroundImage: `url(\"${draftCustomizations.backgrounds[draftTheme]}\")` }} aria-hidden="true" />}
                 <div className="custom-theme-preview-overlay" aria-hidden="true" />
                 <div className="custom-theme-preview-copy"><strong>{themeOption(draftTheme).name}</strong><span>Sticker pack included automatically</span></div>
-                <div className="custom-theme-preview-stickers">
-                  {STICKERS[draftTheme].slice(0, 1).map(file => <img key={file} src={stickerUrl(draftTheme, file)} alt="" aria-hidden="true" />)}
+                <div className="custom-theme-preview-stickers" style={{ overflowX: 'auto', flexWrap: 'nowrap', width: '100%', paddingBottom: 2 }}>
+                  {STICKERS[draftTheme].slice(0, 6).map(file => <img key={file} src={stickerUrl(draftTheme, file)} alt="" aria-hidden="true" />)}
                 </div>
               </div>
 
