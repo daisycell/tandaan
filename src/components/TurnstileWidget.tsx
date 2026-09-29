@@ -3,6 +3,8 @@ import { Turnstile } from '@marsidev/react-turnstile'
 
 const TOKEN_MAX_AGE_MS = 4 * 60 * 1000
 const REQUEST_TIMEOUT_MS = 15000
+const RENDER_RETRY_LIMIT = 30
+const RENDER_RETRY_DELAY_MS = 100
 
 let lastToken: string | null = null
 let tokenIssuedAt = 0
@@ -12,6 +14,7 @@ let tokenPromise: Promise<string> | null = null
 let captchaError: Error | null = null
 let requestActive = false
 let retryTimeout: ReturnType<typeof setTimeout> | null = null
+let renderRetryTimer: ReturnType<typeof setTimeout> | null = null
 
 let turnstileRefInstance: any = null
 let widgetRendered = false
@@ -75,12 +78,21 @@ export function clearCaptchaError(): void {
   captchaError = null
 }
 
+function tryRender(attempt: number): void {
+  if (widgetRendered) return
+  if (attempt > RENDER_RETRY_LIMIT) return
+  turnstileRefInstance?.render()
+  if (widgetRendered) return
+  renderRetryTimer = setTimeout(() => tryRender(attempt + 1), RENDER_RETRY_DELAY_MS)
+}
+
 export function TurnstileWidget() {
   const turnstileRef = useRef<any>(null)
 
   useEffect(() => {
     turnstileRefInstance = turnstileRef.current
     return () => {
+      if (renderRetryTimer) { clearTimeout(renderRetryTimer); renderRetryTimer = null }
       turnstileRefInstance = null
       widgetRendered = false
     }
@@ -93,7 +105,7 @@ export function TurnstileWidget() {
       options={{ execution: 'render', appearance: 'interaction-only' }}
       onLoadScript={() => {
         if (widgetRendered) return
-        turnstileRefInstance?.render()
+        tryRender(1)
       }}
       onWidgetLoad={() => {
         widgetRendered = true
