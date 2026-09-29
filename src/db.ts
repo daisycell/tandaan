@@ -50,8 +50,18 @@ export async function setLocalTheme(theme: string) {
   await db.settings.put({ key: 'theme', value: theme })
 }
 
-export async function getLocalThemeCustomizations<T = unknown>(): Promise<T | null> {
-  const row = await db.settings.get('themeCustomizations')
+// Pastel colour variant is device-local, like the custom background. It is
+// intentionally not synced to Supabase.
+export async function getLocalThemeColor() {
+  const row = await db.settings.get('themeColor')
+  return row?.value ?? ''
+}
+
+export async function setLocalThemeColor(color: string) {
+  await db.settings.put({ key: 'themeColor', value: color })
+}
+
+export async function getLocalThemeCustomizations<T = unknown>(): Promise<T | null> {  const row = await db.settings.get('themeCustomizations')
   if (!row?.value) return null
   try {
     return JSON.parse(row.value) as T

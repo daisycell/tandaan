@@ -6,7 +6,7 @@ const normalize = (text: string) => text
   .trim()
 
 export type Intent = 'task' | 'shopping' | 'purchase' | 'note'
-type AmbiguousIntent = 'task' | 'shopping' | 'purchase'
+type AmbiguousIntent = 'shopping' | 'purchase'
 
 export type ParsedLine = { itemName: string; quantity?: number | null; unit?: string | null; price?: number | null }
 
@@ -232,11 +232,26 @@ export function parseInput(text: string): ParsedInput {
   const explicitMoney = hasExplicitMoneyCue(raw)
   const structuredPurchase = purchases.some(p => p.price != null && p.quantity != null && p.unit != null)
 
-  if (structuredPurchase || explicitMoney) {
-    if (purchases.length) return { intent: 'purchase', original: raw, purchases }
+  // A complete quantity+unit+price record, or explicit money, is unambiguous: purchase.
+  if ((structuredPurchase || explicitMoney) && purchases.length) {
+    return { intent: 'purchase', original: raw, purchases }
   }
 
-  if (hasNumberLikeToken(raw) && shoppingItems.length && purchases.length) {
+  const due = extractDueInfo(raw)
+  const hasActionSignal = taskVerb.test(t) || futureTask.test(t)
+  const hasTimeOrDateSignal = Boolean(due.dueDate || due.dueTime)
+  const hasNumberSignal = hasNumberLikeToken(raw)
+
+  // Only an action verb or a date/time signal can make something a task.
+  if (hasActionSignal || hasTimeOrDateSignal) {
+    return { intent: 'task', original: raw, title: due.cleanedTitle || raw, dueDate: due.dueDate ?? null, dueTime: due.dueTime ?? null }
+  }
+
+  if (noteVerb.test(t)) return { intent: 'note', original: raw, title: raw }
+
+  // No verb and no date: the only genuine ambiguity left is number-as-quantity vs number-as-price.
+  // Task is never offered here, because nothing about the text suggests one.
+  if (hasNumberSignal && shoppingItems.length && purchases.length) {
     return {
       intent: 'shopping',
       original: raw,
@@ -244,13 +259,13 @@ export function parseInput(text: string): ParsedInput {
       shoppingItems,
       purchases,
       ambiguous: {
-        options: ['task', 'shopping', 'purchase'],
-        reason: 'This shortcut can be a task, a shopping list, or a purchase. The number may be a quantity or a price.'
+        options: ['shopping', 'purchase'],
+        reason: 'The number could be a quantity or a price. Save it as something to buy, or as something you already bought?'
       }
     }
   }
 
-  if (shoppingItems.length && shoppingItems.length >= 2 && !hasNumberLikeToken(raw)) {
+  if (shoppingItems.length >= 2 && !hasNumberSignal) {
     return { intent: 'shopping', original: raw, shopping: shoppingItems[0], shoppingItems }
   }
 
@@ -258,38 +273,12 @@ export function parseInput(text: string): ParsedInput {
     return { intent: 'purchase', original: raw, purchases }
   }
 
-  if (noteVerb.test(t)) return { intent: 'note', original: raw, title: raw }
-
-  const due = extractDueInfo(raw)
-  const hasActionSignal = taskVerb.test(t) || futureTask.test(t)
-  const hasTimeOrDateSignal = Boolean(due.dueDate || due.dueTime)
-  const hasPriceSignal = hasExplicitMoneyCue(raw)
-
-  if (hasActionSignal || hasTimeOrDateSignal) {
-    return { intent: 'task', original: raw, title: due.cleanedTitle || raw, dueDate: due.dueDate ?? null, dueTime: due.dueTime ?? null }
-  }
-
-  if (!hasPriceSignal && !hasNumberLikeToken(raw)) {
-    return {
-      intent: 'shopping',
-      original: raw,
-      shopping: { itemName: raw },
-      ambiguous: {
-        options: ['task', 'shopping', 'purchase'],
-        reason: 'This looks like an item or short phrase without a clear action, date, time, or price.'
-      }
-    }
-  }
-
+  // No verb, no date, no number: just an item. Save it directly rather than asking.
   return {
     intent: 'shopping',
     original: raw,
     shopping: shoppingItems[0] ?? { itemName: raw },
-    shoppingItems: shoppingItems.length ? shoppingItems : [{ itemName: raw }],
-    ambiguous: {
-      options: ['task', 'shopping', 'purchase'],
-      reason: 'This shortcut can be a task, a shopping list item, or a purchase. Choose how you want to save it.'
-    }
+    shoppingItems: shoppingItems.length ? shoppingItems : [{ itemName: raw }]
   }
 }
 
