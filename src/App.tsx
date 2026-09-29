@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Mic, Pencil, Plus, Settings, ShoppingCart, Sparkles, Square, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
-import { db, getLocalName, getLocalTheme, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeCustomizations } from './db'
+import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeColor, setLocalThemeCustomizations } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { parseInput, type ParsedInput, type ParsedLine } from './parser'
 import { supabase } from './supabase'
@@ -9,8 +9,8 @@ import { TurnstileWidget } from './components/TurnstileWidget'
 import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
 import { prepareVoice, startVoiceCapture, transcribeVoice, cancelVoiceEngine, type VoiceRecorder } from './voice'
-import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
-import { DEFAULT_THEME, STICKERS, THEME_OPTIONS, isThemeId, stickerUrl, themeOption } from './theme'
+import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
+import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
 
 function newId() {
@@ -119,9 +119,12 @@ export default function App() {
   const [status, setStatus] = useState('Offline-first ready')
   const [profileReady, setProfileReady] = useState(false)
   const [theme, setTheme] = useState<ThemeId>(DEFAULT_THEME)
+  const [themeColor, setThemeColor] = useState<ThemeColorId>(DEFAULT_THEME_COLOR)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsName, setSettingsName] = useState('')
   const [draftTheme, setDraftTheme] = useState<ThemeId>(DEFAULT_THEME)
+  const [draftThemeColor, setDraftThemeColor] = useState<ThemeColorId>(DEFAULT_THEME_COLOR)
+  const [colorPickerStep, setColorPickerStep] = useState<'animal' | 'color'>('animal')
   const [themeCustomizations, setThemeCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
   const [draftCustomizations, setDraftCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
   const [displayThemeStickers, setDisplayThemeStickers] = useState<string[]>(() => STICKERS[DEFAULT_THEME].slice(0, 3))
@@ -172,12 +175,13 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     ;(async () => {
       try {
         // Render from local IndexedDB immediately; cloud work happens in the background.
-        const [localTasks, localShopping, localPurchases, saved, savedTheme, savedCustomizations] = await Promise.all([
+        const [localTasks, localShopping, localPurchases, saved, savedTheme, savedColor, savedCustomizations] = await Promise.all([
           db.tasks.toArray(),
           db.shopping.toArray(),
           db.purchases.toArray(),
           getLocalName(),
           getLocalTheme(),
+          getLocalThemeColor(),
           getLocalThemeCustomizations<ThemeCustomizations>(),
         ])
         if (cancelled) return
@@ -187,6 +191,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         setName(saved)
         setSettingsName(saved)
         if (isThemeId(savedTheme)) setTheme(savedTheme)
+        if (isThemeColorId(savedColor)) setThemeColor(savedColor)
         if (savedCustomizations) {
           const normalized = normalizeThemeCustomizations(savedCustomizations)
           setThemeCustomizations(normalized)
@@ -267,11 +272,17 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    const meta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null
-    const accent = THEME_OPTIONS.find(option => option.id === theme)?.swatch ?? '#8b5cf6'
-    if (meta) meta.content = accent
     void setLocalTheme(theme)
   }, [theme])
+
+  // Colour only drives the palette. The sticker pack is keyed on `theme` alone,
+  // so changing colour can never change artwork.
+  useEffect(() => {
+    document.documentElement.dataset.color = themeColor
+    const meta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null
+    if (meta) meta.content = colorSwatch(theme, themeColor)
+    void setLocalThemeColor(themeColor)
+  }, [theme, themeColor])
 
   useEffect(() => {
     const background = themeCustomizations.backgrounds[theme]
@@ -324,9 +335,11 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     const clean = settingsName.trim() || name
     const normalized = normalizeThemeCustomizations(draftCustomizations)
     setTheme(draftTheme)
+    setThemeColor(draftThemeColor)
     setLocalName(clean)
     setName(clean)
     setLocalTheme(draftTheme)
+    setLocalThemeColor(draftThemeColor)
     setLocalThemeCustomizations(normalized)
     setThemeCustomizations(normalized)
 
@@ -344,7 +357,9 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   function openSettings() {
     setSettingsName(name)
     setDraftTheme(theme)
+    setDraftThemeColor(themeColor)
     setDraftCustomizations(normalizeThemeCustomizations(themeCustomizations))
+    setColorPickerStep('animal')
     setSettingsOpen(true)
   }
 
@@ -652,7 +667,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     if (saved && !duePrompt) setVoiceReview(null)
   }
 
-  async function chooseAmbiguousIntent(intent: 'task' | 'shopping' | 'purchase') {
+  async function chooseAmbiguousIntent(intent: 'shopping' | 'purchase') {
     if (!ambiguousInput || ambiguitySaveLockRef.current) return
     ambiguitySaveLockRef.current = true
     setSavingAmbiguity(true)
@@ -829,13 +844,11 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                 <div className="review-block">
                   <div className="review-label">Shortcut input</div>
                   <div className="ambiguity-text">{ambiguousInput.original}</div>
-                  {(ambiguousInput.ambiguous?.options ?? ['task', 'shopping', 'purchase']).map(option => {
-                    const title = option === 'task' ? 'Task' : option === 'shopping' ? 'Shopping list' : 'Purchase'
-                    const detail = option === 'task'
-                      ? `Save “${ambiguousInput.original}” as a task`
-                      : option === 'shopping'
-                        ? ((ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ') || 'Items to buy')
-                        : ((ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ') || 'Items already bought')
+                  {(ambiguousInput.ambiguous?.options ?? ['shopping', 'purchase']).map(option => {
+                    const title = option === 'shopping' ? 'Shopping list' : 'Purchase'
+                    const detail = option === 'shopping'
+                      ? ((ambiguousInput.shoppingItems ?? [ambiguousInput.shopping]).filter(Boolean).map(item => `${item?.itemName}${item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item?.unit)}` : ''}`).join(', ') || 'Items to buy')
+                      : ((ambiguousInput.purchases ?? []).map(item => `${item.itemName}${item?.price != null ? ` · ${money(item.price)}` : item?.quantity != null ? ` · ${item.quantity} ${shortUnit(item.unit)}` : ''}`).join(', ') || 'Items already bought')
                     return (
                       <button key={option} className="intent-choice-card" onClick={() => void chooseAmbiguousIntent(option)} disabled={savingAmbiguity}>
                         <span><strong>{title}</strong><small>{detail}</small></span>
@@ -920,16 +933,54 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
             </section>
 
             <section className="settings-section">
-              <div className="settings-section-title"><Palette size={17} /><div><strong>Animal theme</strong><span>Choose an animal theme. Its sticker pack is included automatically.</span></div></div>
-              <div className="theme-grid">
-                {THEME_OPTIONS.map(option => (
-                  <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
-                    <img className="theme-choice-sticker" src={stickerUrl(option.id, STICKERS[option.id][0])} alt="" aria-hidden="true" />
-                    <span className="theme-choice-copy"><strong>{option.name}</strong><small>{option.description}</small></span>
-                    {draftTheme === option.id && <CheckCircle2 size={17} />}
-                  </button>
-                ))}
-              </div>
+              <div className="settings-section-title"><Palette size={17} /><div>
+                <strong>{colorPickerStep === 'animal' ? 'Animal theme' : `${themeOption(draftTheme).name} colour`}</strong>
+                <span>{colorPickerStep === 'animal'
+                  ? 'Step 1 of 2 — pick an animal. Its sticker pack is included automatically.'
+                  : 'Step 2 of 2 — pick a colour. Stickers and artwork stay exactly the same.'}</span>
+              </div></div>
+
+              {colorPickerStep === 'animal' ? (
+                <>
+                  <div className="theme-grid">
+                    {THEME_OPTIONS.map(option => (
+                      <button key={option.id} className={draftTheme === option.id ? 'theme-choice active' : 'theme-choice'} onClick={() => setDraftTheme(option.id)}>
+                        <img className="theme-choice-sticker" src={stickerUrl(option.id, STICKERS[option.id][0])} alt="" aria-hidden="true" />
+                        <span className="theme-choice-copy"><strong>{option.name}</strong><small>{option.description}</small></span>
+                        {draftTheme === option.id && <CheckCircle2 size={17} />}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="primary full" onClick={() => setColorPickerStep('color')}>Continue to colours</button>
+                </>
+              ) : (
+                <>
+                  <div className="color-grid">
+                    {COLOR_OPTIONS.map(option => {
+                      const isOriginal = option.id === 'original'
+                      const swatch = isOriginal ? THEME_OPTIONS.find(t => t.id === draftTheme)?.swatch ?? '#8b5cf6' : option.swatch
+                      return (
+                        <button
+                          key={option.id}
+                          className={draftThemeColor === option.id ? 'color-choice active' : 'color-choice'}
+                          onClick={() => setDraftThemeColor(option.id)}
+                          aria-pressed={draftThemeColor === option.id}
+                        >
+                          <span className="color-swatch" style={{ background: swatch }} aria-hidden="true" />
+                          <strong>{option.name}</strong>
+                          {draftThemeColor === option.id && <CheckCircle2 size={15} />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="color-preview" aria-hidden="true">
+                    <span className="color-preview-dot" style={{ background: colorSwatch(draftTheme, draftThemeColor) }} />
+                    <span className="color-preview-bar" style={{ background: colorSwatch(draftTheme, draftThemeColor) }} />
+                    <span className="color-preview-bar dim" style={{ background: colorSwatch(draftTheme, draftThemeColor) }} />
+                  </div>
+                  <button className="secondary full" onClick={() => setColorPickerStep('animal')}>Back to animals</button>
+                </>
+              )}
             </section>
 
             <section className="settings-section">

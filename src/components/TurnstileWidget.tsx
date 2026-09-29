@@ -78,11 +78,19 @@ export function clearCaptchaError(): void {
   captchaError = null
 }
 
+// === TEMP DIAGNOSTIC — remove all lines tagged [tdiag] before commit ===
+let mountCount = 0
+let lastAttempt = 0
+function tdiag(...args: any[]) { console.log('[tdiag]', ...args) }
+// === end TEMP DIAGNOSTIC ===
+
 function tryRender(attempt: number): void {
-  if (widgetRendered) return
-  if (attempt > RENDER_RETRY_LIMIT) return
+  if (widgetRendered) { tdiag(`tryRender(${attempt}) STOP reason=widgetRendered`); return }
+  if (attempt > RENDER_RETRY_LIMIT) { tdiag(`tryRender STOP reason=budget-exhausted at attempt=${attempt}`); return }
+  lastAttempt = attempt
   turnstileRefInstance?.render()
-  if (widgetRendered) return
+  tdiag(`tryRender(${attempt}) called widgetRendered=${widgetRendered} ref=${turnstileRefInstance ? 'set' : 'NULL'}`)
+  if (widgetRendered) { tdiag(`tryRender(${attempt}) STOP reason=widget-loaded`); return }
   renderRetryTimer = setTimeout(() => tryRender(attempt + 1), RENDER_RETRY_DELAY_MS)
 }
 
@@ -90,8 +98,11 @@ export function TurnstileWidget() {
   const turnstileRef = useRef<any>(null)
 
   useEffect(() => {
+    mountCount += 1
+    tdiag(`MOUNT #${mountCount} ref=${turnstileRef.current ? 'set' : 'NULL'} siteKey=${import.meta.env.VITE_TURNSTILE_SITE_KEY ? 'SET' : 'EMPTY'} mountCount=${mountCount}`)
     turnstileRefInstance = turnstileRef.current
     return () => {
+      tdiag(`UNMOUNT #${mountCount} pendingRetry=${renderRetryTimer ? 'YES' : 'no'} lastAttemptAt=${lastAttempt}`)
       if (renderRetryTimer) { clearTimeout(renderRetryTimer); renderRetryTimer = null }
       turnstileRefInstance = null
       widgetRendered = false
@@ -104,13 +115,16 @@ export function TurnstileWidget() {
       ref={turnstileRef}
       options={{ execution: 'render', appearance: 'interaction-only' }}
       onLoadScript={() => {
+        tdiag(`onLoadScript FIRED widgetRendered=${widgetRendered} mountCount=${mountCount}`)
         if (widgetRendered) return
         tryRender(1)
       }}
       onWidgetLoad={() => {
+        tdiag(`onWidgetLoad FIRED mountCount=${mountCount} lastAttempt=${lastAttempt}`)
         widgetRendered = true
       }}
       onSuccess={(token: string) => {
+        tdiag(`onSuccess FIRED hasToken=${!!token?.trim()} requestActive=${requestActive} mountCount=${mountCount}`)
         if (!token || !token.trim()) return
         tokenIssuedAt = Date.now()
         if (!requestActive) {
@@ -130,6 +144,7 @@ export function TurnstileWidget() {
         tokenIssuedAt = 0
       }}
       onError={() => {
+        tdiag(`onError FIRED requestActive=${requestActive} mountCount=${mountCount}`)
         if (requestActive) rejectCurrent(new Error('CAPTCHA verification failed. Please reload the page and try again.'))
       }}
     />

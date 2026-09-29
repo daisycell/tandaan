@@ -38,6 +38,10 @@ export type Purchase = {
 
 export type ThemeId = 'cat' | 'dog' | 'capybara'
 
+// Pastel palette applied on top of an animal theme. 'original' reproduces that
+// animal's current look exactly, so the feature is purely additive.
+export type ThemeColorId = 'original' | 'charcoal' | 'maroon' | 'pink' | 'yellow' | 'blue'
+
 export type Profile = {
   id: string
   displayName: string
