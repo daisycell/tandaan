@@ -4,11 +4,12 @@ import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCusto
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { parseInput, type ParsedInput, type ParsedLine } from './parser'
 import { supabase } from './supabase'
-import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError, purgeLocalTombstones, visible } from './sync'
+import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError, purgeLocalTombstones, visible, getFlaggedOutboxItems, retryOutboxItem, discardOutboxItem, MAX_RETRIES } from './sync'
+import type { OutboxItem } from './db'
 import { TurnstileWidget } from './components/TurnstileWidget'
 import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
-import { prepareVoice, startVoiceCapture, transcribeVoice, cancelVoiceEngine, type VoiceRecorder } from './voice'
+import { prepareVoice, startVoiceCapture, transcribeVoice, cancelVoiceEngine, isVoiceSupported, VOICE_UNSUPPORTED_MESSAGE, type VoiceRecorder } from './voice'
 import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
@@ -117,6 +118,8 @@ export default function App() {
   const [purchases, setPurchases] = useState<Purchase[]>([])
   const [input, setInput] = useState('')
   const [status, setStatus] = useState('Offline-first ready')
+  const [flaggedItems, setFlaggedItems] = useState<OutboxItem[]>([])
+  const [flaggedOpen, setFlaggedOpen] = useState(false)
   const [profileReady, setProfileReady] = useState(false)
   const [theme, setTheme] = useState<ThemeId>(DEFAULT_THEME)
   const [themeColor, setThemeColor] = useState<ThemeColorId>(DEFAULT_THEME_COLOR)
@@ -157,6 +160,9 @@ export default function App() {
   const [editPurchasePrice, setEditPurchasePrice] = useState('')
 
   const [voiceState, setVoiceState] = useState<'idle' | 'checking-model' | 'loading-model' | 'recording' | 'transcribing'>('idle')
+  // null until the capability probe resolves, so the Speak button is not
+  // disabled during the check itself.
+  const [voiceSupported, setVoiceSupported] = useState<boolean | null>(null)
   const [voiceLevel, setVoiceLevel] = useState(0)
   const [voiceSeconds, setVoiceSeconds] = useState(0)
   const [voiceProgress, setVoiceProgress] = useState<number | null>(null)
@@ -226,6 +232,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
             setShopping(synced.shoppingItems)
             setPurchases(synced.purchases)
             setStatus('Synced · offline ready')
+            setFlaggedItems(await getFlaggedOutboxItems())
           } catch {
             if (!cancelled) setStatus('Offline-ready · sync pending')
           }
@@ -256,6 +263,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         setShopping(synced.shoppingItems)
         setPurchases(synced.purchases)
         setStatus('Synced · offline ready')
+        setFlaggedItems(await getFlaggedOutboxItems())
       } catch {
         setStatus('Online · sync retry pending')
       }
@@ -263,6 +271,50 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     window.addEventListener('online', handleOnline)
     return () => window.removeEventListener('online', handleOnline)
   }, [])
+
+  // Probe voice capability once on load so an unsupported device gets a disabled
+  // Speak button and an explanation up front, instead of tapping through to a
+  // failure. prepareVoice still re-checks on tap, because the probe is async and
+  // availability can change (e.g. returning from the background).
+  useEffect(() => {
+    let cancelled = false
+    void isVoiceSupported()
+      .then(supported => { if (!cancelled) setVoiceSupported(supported) })
+      .catch(() => { if (!cancelled) setVoiceSupported(true) })
+    return () => { cancelled = true }
+  }, [])
+
+  // Watch the outbox so a write the server refused is surfaced instead of
+  // retrying forever in the background. Polled rather than pushed because
+  // Dexie has no cross-context change notification.
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const items = await getFlaggedOutboxItems()
+        if (!cancelled) setFlaggedItems(items)
+      } catch {
+        // Non-blocking: a failed poll just means the pill updates next tick.
+      }
+    }
+    void refresh()
+    const id = window.setInterval(() => void refresh(), 15_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [])
+
+  async function handleRetryItem(id: number) {
+    await retryOutboxItem(id)
+    setFlaggedItems(await getFlaggedOutboxItems())
+    setStatus('Retrying that change…')
+  }
+
+  async function handleDiscardItem(id: number) {
+    await discardOutboxItem(id)
+    setFlaggedItems(await getFlaggedOutboxItems())
+  }
 
   useEffect(() => {
     if (voiceState !== 'recording') return
@@ -751,6 +803,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       <header className="app-header">
         <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={20} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
         <div className="header-actions">
+          {flaggedItems.length > 0 && <button className="sync-warning" onClick={() => setFlaggedOpen(true)} title="Some changes could not be synced">{flaggedItems.length} failed to sync</button>}
           <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => void ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
           <button className="icon-btn" onClick={openSettings} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
         </div>
@@ -772,11 +825,12 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addFromText() }} placeholder="Try: Pay electricity tomorrow at 6 PM" />
           <button className="primary add-btn" onClick={() => void addFromText()}><Plus size={18} /> Add</button>
         </div>
-        <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model' ? 'voice-btn transcribing' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model'}>
+        <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model' ? 'voice-btn transcribing' : voiceSupported === false ? 'voice-btn unsupported' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceSupported === false || voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model'} title={voiceSupported === false ? VOICE_UNSUPPORTED_MESSAGE : undefined} aria-label={voiceSupported === false ? VOICE_UNSUPPORTED_MESSAGE : undefined}>
           {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceState === 'recording' ? `Listening · ${voiceSeconds}s` : voiceState === 'checking-model' ? 'Checking voice…' : voiceState === 'loading-model' ? (voiceProgress != null ? `Setting up voice · ${voiceProgress}%` : 'Setting up voice…') : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
+          {voiceSupported === false ? 'Voice unavailable' : voiceState === 'recording' ? `Listening · ${voiceSeconds}s` : voiceState === 'checking-model' ? 'Checking voice…' : voiceState === 'loading-model' ? (voiceProgress != null ? `Setting up voice · ${voiceProgress}%` : 'Setting up voice…') : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
           {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
         </button>
+        {voiceSupported === false && <div className="inline-error">{VOICE_UNSUPPORTED_MESSAGE}</div>}
         {voiceError && <div className="inline-error">{voiceError}</div>}
         {signInError && <div className="inline-error">{signInError.message}</div>}
       </section>
@@ -1045,6 +1099,25 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
 
       {editingPurchase && (
         <div className="modal-backdrop"><div className="modal card"><div className="modal-header"><strong>Edit purchase</strong><button className="icon-btn" onClick={() => setEditingPurchase(null)}><X /></button></div><label>Item</label><input value={editPurchaseName} onChange={e => setEditPurchaseName(e.target.value)} /><div className="two-col"><div><label>Quantity</label><input type="number" min="0" step="0.001" value={editPurchaseQty} onChange={e => setEditPurchaseQty(e.target.value)} /></div><div><label>Unit</label><input value={editPurchaseUnit} onChange={e => setEditPurchaseUnit(e.target.value)} placeholder="kg, tray, pcs" /></div></div><label>Price (optional)</label><input type="number" min="0" step="0.01" value={editPurchasePrice} onChange={e => setEditPurchasePrice(e.target.value)} /><div className="modal-actions"><button className="secondary" onClick={() => setEditingPurchase(null)}>Cancel</button><button className="primary" onClick={() => void savePurchaseEdit()}>Save changes</button></div></div></div>
+      )}
+
+      {flaggedOpen && (
+        <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setFlaggedOpen(false) }}><div className="modal card"><div className="modal-header"><strong>Changes that did not sync</strong><button className="icon-btn" onClick={() => setFlaggedOpen(false)}><X /></button></div>
+          <p className="modal-note">The server refused these {MAX_RETRIES} times. Everything is still saved on this phone. Retry each one, or discard it to stop trying.</p>
+          {flaggedItems.length === 0 && <p>Nothing is stuck right now.</p>}
+          {flaggedItems.map(item => (
+            <div className="flagged-row" key={item.id}>
+              <div className="flagged-text">
+                <strong>{item.operation === 'delete' ? 'Delete' : 'Save'} {item.entity === 'task' ? 'task' : item.entity === 'shopping' ? 'shopping item' : 'purchase'}</strong>
+                <small>Refused {item.retryCount ?? MAX_RETRIES} time{item.retryCount === 1 ? '' : 's'}{item.lastError ? ` · ${item.lastError}` : ''}</small>
+              </div>
+              <div className="flagged-actions">
+                {item.id !== undefined && <button className="secondary" onClick={() => void handleRetryItem(item.id!)}>Retry</button>}
+                {item.id !== undefined && <button className="danger" onClick={() => void handleDiscardItem(item.id!)}>Discard</button>}
+              </div>
+            </div>
+          ))}
+        </div></div>
       )}
       <TurnstileWidget />
     </main>

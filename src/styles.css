@@ -91,6 +91,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .voice-btn:hover { border-color:var(--accent); }
 .voice-btn.recording { background:var(--accent-soft); border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft) inset; }
 .voice-btn.transcribing { opacity:.88; }
+.voice-btn.unsupported { opacity:.5; cursor:not-allowed; }
 .voice-meter { width:64px; height:18px; display:flex; align-items:flex-end; justify-content:center; overflow:hidden; }
 .voice-meter span { width:52px; height:15px; display:block; transform-origin:bottom center; border-radius:999px; background:var(--accent); transition:transform .08s linear; }
 .voice-status { margin-top:8px; color:var(--muted-2); font-size:11px; text-align:center; }
@@ -793,4 +794,22 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .color-choice { padding:9px 5px 8px; border-radius:12px; }
   .color-choice strong { font-size:10.5px; }
   .color-swatch { height:24px; max-width:44px; }
+}
+
+
+/* Outbox failure surfacing */
+.sync-warning { display:inline-flex; align-items:center; gap:6px; max-width:170px; padding:6px 10px; border-radius:999px; border:1px solid var(--danger, #b3261e); background:var(--danger-soft, #fdecea); color:var(--danger, #b3261e); font-size:11px; font-weight:600; line-height:1.2; cursor:pointer; }
+.sync-warning:hover { filter:brightness(0.97); }
+.modal-note { margin:0 0 12px; font-size:12.5px; opacity:.75; }
+.flagged-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-top:1px solid rgba(128,128,128,.22); }
+.flagged-text { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.flagged-text strong { font-size:13px; font-weight:600; }
+.flagged-text small { font-size:11px; opacity:.7; overflow-wrap:anywhere; }
+.flagged-actions { display:flex; gap:6px; flex:0 0 auto; }
+.flagged-actions button { min-height:36px; padding:0 12px; font-size:12px; }
+
+@media (max-width:620px) {
+  .sync-warning { max-width:120px; font-size:10.5px; }
+  .flagged-row { flex-direction:column; align-items:stretch; }
+  .flagged-actions { justify-content:flex-end; }
 }

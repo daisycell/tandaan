@@ -3,15 +3,19 @@ import type { Purchase, ShoppingItem, Task } from './types'
 
 type LocalSettings = { key: string; value: string }
 
-type OutboxItem = {
+export type OutboxItem = {
   id?: number
   entity: 'task' | 'shopping' | 'purchase'
   operation: 'upsert' | 'delete'
   recordId: string
   payload?: Task | ShoppingItem | Purchase
   createdAt: string
+  /** Server rejections so far. Reset by a manual retry. */
   retryCount?: number
+  /** Set at MAX_RETRIES. Surfaced in the UI; no longer attempted automatically. */
   flagged?: boolean
+  /** Most recent failure message, for display. */
+  lastError?: string
 }
 
 class TandaanDB extends Dexie {

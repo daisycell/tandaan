@@ -64,6 +64,25 @@ async function pageHasWebGPU() {
   }
 }
 
+/**
+ * Shown when the device cannot run the local voice model at all.
+ *
+ * Deliberately avoids blaming the user's phone: WebGPU availability is an OS
+ * version question, not a hardware fault.
+ */
+export const VOICE_UNSUPPORTED_MESSAGE = "Voice isn't supported on this device yet. On iPhone, Tandaan runs the voice model on the GPU, which needs iOS 26 or newer."
+
+/**
+ * Whether on-device voice can run here.
+ *
+ * Desktop always reports true: the worker falls back to the WASM engine when
+ * WebGPU is absent (see voiceWorker.ts), so blocking desktop would regress a
+ * path that works today. Mobile has no fallback, so WebGPU is required.
+ */
+export async function isVoiceSupported() {
+  return pageHasWebGPU()
+}
+
 function createWorker() {
   if (worker) return worker
   const createdAt = voiceDiagnosticNow()
@@ -292,7 +311,7 @@ export async function prepareVoice(onProgress?: ProgressCallback) {
   const online = navigator.onLine !== false
   const webgpuAvailable = await pageHasWebGPU()
   if (isMobileDevice() && !webgpuAvailable) {
-    throw new Error('On-device voice is unavailable on this iPhone because WebGPU is not available. Tandaan will not load the heavy WASM engine.')
+    throw new Error(VOICE_UNSUPPORTED_MESSAGE)
   }
   voiceDiagnostic('model-load-start', { modelId, online, webgpuAvailable })
   const result = await requestWorker('prepare', modelId, undefined, {
@@ -320,7 +339,7 @@ export async function transcribeVoice(blob: Blob, durationMs: number) {
     voiceDiagnostic('audio-decoded', { durationMs, blobSizeBytes: blob.size, samples: audio.length, decodeMs: voiceDiagnosticNow() - decodeStartedAt })
     const modelId = chooseModelId()
     const webgpuAvailable = await pageHasWebGPU()
-    if (isMobileDevice() && !webgpuAvailable) throw new Error('On-device voice is unavailable because WebGPU is no longer available on this phone.')
+    if (isMobileDevice() && !webgpuAvailable) throw new Error(VOICE_UNSUPPORTED_MESSAGE)
     voiceDiagnostic('inference-start', { modelId, samples: audio.length, durationMs })
     const result = await requestWorker('transcribe', modelId, audio, {
       online: navigator.onLine !== false,
