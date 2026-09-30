@@ -1,10 +1,21 @@
 import { db } from './db'
 import { supabase } from './supabase'
 import { requestCaptchaToken, getCaptchaError, clearCaptchaError } from './components/TurnstileWidget'
+import { decideMerge, isPurgeableTombstone, shouldPushOrphan, visible, type Tombstoned } from './tombstones'
 import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
+
+export { visible } from './tombstones'
 
 let pendingSignInPromise: Promise<string | null> | null = null
 let onlineHandlerInstalled = false
+
+/** Drops local tombstones past the retention window. */
+export async function purgeLocalTombstones(now: number = Date.now()) {
+  const stale = <T extends Tombstoned>(rows: T[]) => rows.filter(r => isPurgeableTombstone(r, now)).map(r => r.id)
+  await db.tasks.bulkDelete(stale(await db.tasks.toArray()))
+  await db.shopping.bulkDelete(stale(await db.shopping.toArray()))
+  await db.purchases.bulkDelete(stale(await db.purchases.toArray()))
+}
 
 if (typeof window !== 'undefined' && !onlineHandlerInstalled) {
   onlineHandlerInstalled = true
@@ -14,22 +25,22 @@ if (typeof window !== 'undefined' && !onlineHandlerInstalled) {
 }
 
 function toDbTask(task: Task, userId: string) {
-  return { id: task.id, user_id: userId, title: task.title, is_completed: task.isCompleted, due_date: task.dueDate ?? null, due_time: task.dueTime ?? null, reminder_enabled: task.reminderEnabled ?? true, reminder_minutes_before: task.reminderMinutesBefore ?? 1440, reminder_at: task.reminderAt ?? null, reminder_sent_at: task.reminderSentAt ?? null, created_at: task.createdAt, updated_at: task.updatedAt }
+  return { id: task.id, user_id: userId, title: task.title, is_completed: task.isCompleted, due_date: task.dueDate ?? null, due_time: task.dueTime ?? null, reminder_enabled: task.reminderEnabled ?? true, reminder_minutes_before: task.reminderMinutesBefore ?? 1440, reminder_at: task.reminderAt ?? null, reminder_sent_at: task.reminderSentAt ?? null, created_at: task.createdAt, updated_at: task.updatedAt, deleted_at: task.deletedAt ?? null }
 }
 function fromDbTask(row: Record<string, unknown>): Task {
-  return { id: String(row.id), title: String(row.title), isCompleted: Boolean(row.is_completed), dueDate: row.due_date ? String(row.due_date) : null, dueTime: row.due_time ? String(row.due_time).slice(0, 5) : null, reminderEnabled: row.reminder_enabled !== false, reminderMinutesBefore: row.reminder_minutes_before == null ? 1440 : Number(row.reminder_minutes_before), reminderAt: row.reminder_at ? String(row.reminder_at) : null, reminderSentAt: row.reminder_sent_at ? String(row.reminder_sent_at) : null, createdAt: String(row.created_at), updatedAt: String(row.updated_at) }
+  return { id: String(row.id), title: String(row.title), isCompleted: Boolean(row.is_completed), dueDate: row.due_date ? String(row.due_date) : null, dueTime: row.due_time ? String(row.due_time).slice(0, 5) : null, reminderEnabled: row.reminder_enabled !== false, reminderMinutesBefore: row.reminder_minutes_before == null ? 1440 : Number(row.reminder_minutes_before), reminderAt: row.reminder_at ? String(row.reminder_at) : null, reminderSentAt: row.reminder_sent_at ? String(row.reminder_sent_at) : null, createdAt: String(row.created_at), updatedAt: String(row.updated_at), deletedAt: row.deleted_at ? String(row.deleted_at) : null }
 }
 function toDbShopping(item: ShoppingItem, userId: string) {
-  return { id: item.id, user_id: userId, name: item.name, quantity: item.quantity ?? null, unit: item.unit ?? null, expected_price: item.expectedPrice ?? null, is_purchased: item.isPurchased, created_at: item.createdAt, updated_at: item.updatedAt }
+  return { id: item.id, user_id: userId, name: item.name, quantity: item.quantity ?? null, unit: item.unit ?? null, expected_price: item.expectedPrice ?? null, is_purchased: item.isPurchased, created_at: item.createdAt, updated_at: item.updatedAt, deleted_at: item.deletedAt ?? null }
 }
 function fromDbShopping(row: Record<string, unknown>): ShoppingItem {
-  return { id: String(row.id), name: String(row.name), quantity: row.quantity == null ? null : Number(row.quantity), unit: row.unit ? String(row.unit) : null, expectedPrice: row.expected_price == null ? null : Number(row.expected_price), isPurchased: Boolean(row.is_purchased), createdAt: String(row.created_at), updatedAt: String(row.updated_at) }
+  return { id: String(row.id), name: String(row.name), quantity: row.quantity == null ? null : Number(row.quantity), unit: row.unit ? String(row.unit) : null, expectedPrice: row.expected_price == null ? null : Number(row.expected_price), isPurchased: Boolean(row.is_purchased), createdAt: String(row.created_at), updatedAt: String(row.updated_at), deletedAt: row.deleted_at ? String(row.deleted_at) : null }
 }
 function toDbPurchase(item: Purchase, userId: string) {
-  return { id: item.id, user_id: userId, item_name: item.itemName, quantity: item.quantity ?? null, unit: item.unit ?? null, price: item.price ?? null, currency: item.currency, purchased_at: item.purchasedAt, notes: item.notes ?? null, created_at: item.createdAt, updated_at: item.updatedAt }
+  return { id: item.id, user_id: userId, item_name: item.itemName, quantity: item.quantity ?? null, unit: item.unit ?? null, price: item.price ?? null, currency: item.currency, purchased_at: item.purchasedAt, notes: item.notes ?? null, created_at: item.createdAt, updated_at: item.updatedAt, deleted_at: item.deletedAt ?? null }
 }
 function fromDbPurchase(row: Record<string, unknown>): Purchase {
-  return { id: String(row.id), itemName: String(row.item_name), quantity: row.quantity == null ? null : Number(row.quantity), unit: row.unit ? String(row.unit) : null, price: row.price == null ? null : Number(row.price), currency: String(row.currency ?? 'PHP') as 'PHP', purchasedAt: String(row.purchased_at), notes: row.notes == null ? null : String(row.notes), createdAt: String(row.created_at), updatedAt: String(row.updated_at) }
+  return { id: String(row.id), itemName: String(row.item_name), quantity: row.quantity == null ? null : Number(row.quantity), unit: row.unit ? String(row.unit) : null, price: row.price == null ? null : Number(row.price), currency: String(row.currency ?? 'PHP') as 'PHP', purchasedAt: String(row.purchased_at), notes: row.notes == null ? null : String(row.notes), createdAt: String(row.created_at), updatedAt: String(row.updated_at), deletedAt: row.deleted_at ? String(row.deleted_at) : null }
 }
 
 export async function getUserId() {
@@ -85,14 +96,20 @@ export async function getRemoteProfile() {
 async function flushOutbox(userId: string) {
   if (!supabase) return
   const pending = await db.outbox.orderBy('id').toArray()
+  const deletedAt = new Date().toISOString()
   for (const item of pending) {
     try {
+      // Deletes are soft: we stamp deleted_at instead of removing the row, so
+      // other devices learn about the delete and purge their own copy. A hard
+      // delete would be indistinguishable from "never existed" and would let
+      // any offline copy resurrect the record. The set_updated_at trigger
+      // refreshes updated_at for us.
       if (item.entity === 'task') {
         if (item.operation === 'upsert' && item.payload) {
           const { error } = await supabase.from('tasks').upsert(toDbTask(item.payload as Task, userId), { onConflict: 'id' })
           if (error) throw error
         } else if (item.operation === 'delete') {
-          const { error } = await supabase.from('tasks').delete().eq('id', item.recordId).eq('user_id', userId)
+          const { error } = await supabase.from('tasks').update({ deleted_at: deletedAt }).eq('id', item.recordId).eq('user_id', userId)
           if (error) throw error
         }
       } else if (item.entity === 'shopping') {
@@ -100,7 +117,7 @@ async function flushOutbox(userId: string) {
           const { error } = await supabase.from('shopping_items').upsert(toDbShopping(item.payload as ShoppingItem, userId), { onConflict: 'id' })
           if (error) throw error
         } else if (item.operation === 'delete') {
-          const { error } = await supabase.from('shopping_items').delete().eq('id', item.recordId).eq('user_id', userId)
+          const { error } = await supabase.from('shopping_items').update({ deleted_at: deletedAt }).eq('id', item.recordId).eq('user_id', userId)
           if (error) throw error
         }
       } else {
@@ -108,7 +125,7 @@ async function flushOutbox(userId: string) {
           const { error } = await supabase.from('purchases').upsert(toDbPurchase(item.payload as Purchase, userId), { onConflict: 'id' })
           if (error) throw error
         } else if (item.operation === 'delete') {
-          const { error } = await supabase.from('purchases').delete().eq('id', item.recordId).eq('user_id', userId)
+          const { error } = await supabase.from('purchases').update({ deleted_at: deletedAt }).eq('id', item.recordId).eq('user_id', userId)
           if (error) throw error
         }
       }
@@ -124,56 +141,66 @@ async function pendingDeletes(entity: 'task' | 'shopping' | 'purchase') {
 }
 
 async function mergeTasks(remote: Task[], local: Task[], deleted: Set<string>) {
-  const remoteById = new Map(remote.map(r => [r.id, r]))
+  const remoteIds = new Set(remote.map(r => r.id))
   for (const r of remote) {
-    if (deleted.has(r.id)) continue
-    const l = local.find(item => item.id === r.id)
-    if (!l || r.updatedAt >= l.updatedAt) await db.tasks.put(r)
-    else await db.outbox.add({ entity: 'task', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
+    const localCopy = local.find(item => item.id === r.id)
+    const action = decideMerge(r, localCopy, deleted.has(r.id))
+    if (action.kind === 'skip') continue
+    if (action.kind === 'put-tombstone' || action.kind === 'put-remote') { await db.tasks.put(r); continue }
+    if (action.kind === 'queue-delete') { await db.outbox.add({ entity: 'task', operation: 'delete', recordId: r.id, createdAt: new Date().toISOString() }); continue }
+    if (localCopy) await db.outbox.add({ entity: 'task', operation: 'upsert', recordId: localCopy.id, payload: localCopy, createdAt: new Date().toISOString() })
   }
   for (const l of local) {
-    if (!remoteById.has(l.id) && !deleted.has(l.id)) await db.outbox.add({ entity: 'task', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
+    if (shouldPushOrphan(l, remoteIds, deleted.has(l.id))) await db.outbox.add({ entity: 'task', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
   }
 }
 
 async function mergeShopping(remote: ShoppingItem[], local: ShoppingItem[], deleted: Set<string>) {
-  const remoteById = new Map(remote.map(r => [r.id, r]))
+  const remoteIds = new Set(remote.map(r => r.id))
   for (const r of remote) {
-    if (deleted.has(r.id)) continue
-    const l = local.find(item => item.id === r.id)
-    if (!l || r.updatedAt >= l.updatedAt) await db.shopping.put(r)
-    else await db.outbox.add({ entity: 'shopping', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
+    const localCopy = local.find(item => item.id === r.id)
+    const action = decideMerge(r, localCopy, deleted.has(r.id))
+    if (action.kind === 'skip') continue
+    if (action.kind === 'put-tombstone' || action.kind === 'put-remote') { await db.shopping.put(r); continue }
+    if (action.kind === 'queue-delete') { await db.outbox.add({ entity: 'shopping', operation: 'delete', recordId: r.id, createdAt: new Date().toISOString() }); continue }
+    if (localCopy) await db.outbox.add({ entity: 'shopping', operation: 'upsert', recordId: localCopy.id, payload: localCopy, createdAt: new Date().toISOString() })
   }
   for (const l of local) {
-    if (!remoteById.has(l.id) && !deleted.has(l.id)) await db.outbox.add({ entity: 'shopping', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
+    if (shouldPushOrphan(l, remoteIds, deleted.has(l.id))) await db.outbox.add({ entity: 'shopping', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
   }
 }
 
 async function mergePurchases(remote: Purchase[], local: Purchase[], deleted: Set<string>) {
-  const remoteById = new Map(remote.map(r => [r.id, r]))
+  const remoteIds = new Set(remote.map(r => r.id))
   for (const r of remote) {
-    if (deleted.has(r.id)) continue
-    const l = local.find(item => item.id === r.id)
-    if (!l || r.updatedAt >= l.updatedAt) await db.purchases.put(r)
-    else await db.outbox.add({ entity: 'purchase', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
+    const localCopy = local.find(item => item.id === r.id)
+    const action = decideMerge(r, localCopy, deleted.has(r.id))
+    if (action.kind === 'skip') continue
+    if (action.kind === 'put-tombstone' || action.kind === 'put-remote') { await db.purchases.put(r); continue }
+    if (action.kind === 'queue-delete') { await db.outbox.add({ entity: 'purchase', operation: 'delete', recordId: r.id, createdAt: new Date().toISOString() }); continue }
+    if (localCopy) await db.outbox.add({ entity: 'purchase', operation: 'upsert', recordId: localCopy.id, payload: localCopy, createdAt: new Date().toISOString() })
   }
   for (const l of local) {
-    if (!remoteById.has(l.id) && !deleted.has(l.id)) await db.outbox.add({ entity: 'purchase', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
+    if (shouldPushOrphan(l, remoteIds, deleted.has(l.id))) await db.outbox.add({ entity: 'purchase', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
   }
 }
 
 export async function syncAll() {
-  const localOnly = { tasks: await db.tasks.toArray(), shoppingItems: await db.shopping.toArray(), purchases: await db.purchases.toArray() }
+  const localOnly = { tasks: visible(await db.tasks.toArray()), shoppingItems: visible(await db.shopping.toArray()), purchases: visible(await db.purchases.toArray()) }
   if (!supabase) return localOnly
 
   const userId = await getUserId()
   if (!userId) return localOnly
   await flushOutbox(userId)
 
+  // Tombstones are deliberately NOT filtered out here. Excluding deleted_at
+  // null rows makes a delete on one device look like the record never existed,
+  // so the other device's merge would treat its local copy as orphaned and
+  // re-upload it. We need to see the tombstone to purge instead.
   const [taskRes, shoppingRes, purchaseRes] = await Promise.all([
-    supabase.from('tasks').select('id,title,is_completed,due_date,due_time,reminder_enabled,reminder_minutes_before,reminder_at,reminder_sent_at,created_at,updated_at').eq('user_id', userId).is('deleted_at', null),
-    supabase.from('shopping_items').select('id,name,quantity,unit,expected_price,is_purchased,created_at,updated_at').eq('user_id', userId).is('deleted_at', null),
-    supabase.from('purchases').select('id,item_name,quantity,unit,price,currency,purchased_at,notes,created_at,updated_at').eq('user_id', userId).is('deleted_at', null)
+    supabase.from('tasks').select('id,title,is_completed,due_date,due_time,reminder_enabled,reminder_minutes_before,reminder_at,reminder_sent_at,created_at,updated_at,deleted_at').eq('user_id', userId),
+    supabase.from('shopping_items').select('id,name,quantity,unit,expected_price,is_purchased,created_at,updated_at,deleted_at').eq('user_id', userId),
+    supabase.from('purchases').select('id,item_name,quantity,unit,price,currency,purchased_at,notes,created_at,updated_at,deleted_at').eq('user_id', userId)
   ])
   if (taskRes.error) throw taskRes.error
   if (shoppingRes.error) throw shoppingRes.error
@@ -190,8 +217,9 @@ export async function syncAll() {
   await mergeShopping(remoteShopping, localShopping, await pendingDeletes('shopping'))
   await mergePurchases(remotePurchases, localPurchases, await pendingDeletes('purchase'))
   await flushOutbox(userId)
+  await purgeLocalTombstones()
 
-  return { tasks: await db.tasks.toArray(), shoppingItems: await db.shopping.toArray(), purchases: await db.purchases.toArray() }
+  return { tasks: visible(await db.tasks.toArray()), shoppingItems: visible(await db.shopping.toArray()), purchases: visible(await db.purchases.toArray()) }
 }
 
 export async function syncTasks() {

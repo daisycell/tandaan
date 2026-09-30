@@ -4,7 +4,7 @@ import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCusto
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { parseInput, type ParsedInput, type ParsedLine } from './parser'
 import { supabase } from './supabase'
-import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError } from './sync'
+import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError, purgeLocalTombstones, visible } from './sync'
 import { TurnstileWidget } from './components/TurnstileWidget'
 import { calculateReminderAt } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
@@ -185,9 +185,9 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           getLocalThemeCustomizations<ThemeCustomizations>(),
         ])
         if (cancelled) return
-        setTasks(localTasks)
-        setShopping(localShopping)
-        setPurchases(localPurchases)
+        setTasks(visible(localTasks))
+        setShopping(visible(localShopping))
+        setPurchases(visible(localPurchases))
         setName(saved)
         setSettingsName(saved)
         if (isThemeId(savedTheme)) setTheme(savedTheme)
@@ -296,9 +296,14 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   }, [theme])
 
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
-  const todayCount = tasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
-  const purchaseTotal = purchases.reduce((sum, purchase) => sum + (purchase.price ?? 0), 0)
-  const pricedPurchaseCount = purchases.filter(p => p.price != null).length
+  // Defensive: state is normally already stripped of tombstones, but counts
+  // must never include a soft-deleted record even if one slips through.
+  const liveTasks = useMemo(() => visible(tasks), [tasks])
+  const liveShopping = useMemo(() => visible(shopping), [shopping])
+  const livePurchases = useMemo(() => visible(purchases), [purchases])
+  const todayCount = liveTasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
+  const purchaseTotal = livePurchases.reduce((sum, purchase) => sum + (purchase.price ?? 0), 0)
+  const pricedPurchaseCount = livePurchases.filter(p => p.price != null).length
 
   async function syncNow(message: string) {
     if (!supabase || !navigator.onLine) {
@@ -432,7 +437,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         await db.shopping.put(item)
         await queueUpsert('shopping', item)
       }
-      setShopping(await db.shopping.toArray())
+      setShopping(visible(await db.shopping.toArray()))
       await syncNow('Shopping saved')
       return true
     }
@@ -443,7 +448,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         await db.purchases.put(purchase)
         await queueUpsert('purchase', purchase)
       }
-      setPurchases(await db.purchases.toArray())
+      setPurchases(visible(await db.purchases.toArray()))
       await syncNow('Purchases saved')
       return true
     }
@@ -518,21 +523,23 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   }
 
   async function deleteTask(task: Task) {
-    await db.tasks.delete(task.id)
+    // Soft delete locally: keep a tombstone so a failed remote delete can't
+    // resurrect the task on this device. purgeLocalTombstones drops it later.
+    await db.tasks.put({ ...task, deletedAt: new Date().toISOString() })
     await queueTaskDelete(task.id)
     setTasks(prev => prev.filter(t => t.id !== task.id))
     await syncNow('Task deleted')
   }
 
   async function deleteShopping(item: ShoppingItem) {
-    await db.shopping.delete(item.id)
+    await db.shopping.put({ ...item, deletedAt: new Date().toISOString() })
     await queueDelete('shopping', item.id)
     setShopping(prev => prev.filter(i => i.id !== item.id))
     await syncNow('Shopping item deleted')
   }
 
   async function deletePurchase(item: Purchase) {
-    await db.purchases.delete(item.id)
+    await db.purchases.put({ ...item, deletedAt: new Date().toISOString() })
     await queueDelete('purchase', item.id)
     setPurchases(prev => prev.filter(i => i.id !== item.id))
     await syncNow('Purchase deleted')
@@ -754,7 +761,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
         <div className="summary-grid">
           <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small>{displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}</div>
-          <div className="summary-card card"><span>Shopping</span><strong>{shopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small>{displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}</div>
+          <div className="summary-card card"><span>Shopping</span><strong>{liveShopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small>{displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}</div>
           <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small>{displayThemeStickers[2] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}</div>
         </div>
       </section>
@@ -797,7 +804,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       </section>
 
       <section className="section-block">
-        <div className="section-heading"><h2>Shopping</h2><span>{shopping.filter(i => !i.isPurchased).length} remaining</span></div>
+        <div className="section-heading"><h2>Shopping</h2><span>{liveShopping.filter(i => !i.isPurchased).length} remaining</span></div>
         <div className="task-list">
           {shopping.length === 0 && <div className="empty card">No shopping items yet.</div>}
           {shopping.map(item => (
