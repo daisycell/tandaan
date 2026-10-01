@@ -148,7 +148,6 @@ export default function App() {
   const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
   const [dueDate, setDueDate] = useState('')
   const [dueTime, setDueTime] = useState('')
-  const [dueStage, setDueStage] = useState<'choice' | 'details'>('choice')
   const [dueReminderOption, setDueReminderOption] = useState<ReminderOptionId>('1d')
 
   const [editingTask, setEditingTask] = useState<Task | null>(null)
@@ -438,15 +437,50 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     openSettings(true)
   }
 
+  const HOME_SCREEN_HINT = "Add Tandaan to your Home Screen to enable phone reminders. Open Tandaan from your Home Screen, then turn on Phone reminders."
+
+  // iOS/iPadOS grants Web Push only to a web app launched from the Home Screen,
+  // and a normal Safari tab hides enough of the API that pushSupported() can
+  // come back false. The device is fine; the context is not.
+  //
+  // Display mode is genuinely feature-detected below. Deciding "is this an Apple
+  // platform at all" has no non-user-agent signal, so the platform token is the
+  // only honest discriminator, and it is a platform test rather than a hardcoded
+  // iPhone model check. userAgentData is preferred where it exists.
+  function isApplePlatform() {
+    if (typeof navigator === 'undefined') return false
+    const declared = (navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform
+    if (declared) return /^ios$/i.test(declared)
+    return /iPad|iPhone|iPod/.test(navigator.userAgent)
+  }
+
+  // Read per call rather than cached, since it is cheap and must not go stale
+  // when the app is relaunched from the Home Screen.
+  function isHomeScreenApp() {
+    if (typeof window === 'undefined') return false
+    if ((window.navigator as { standalone?: boolean }).standalone === true) return true
+    return typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches
+  }
+
+  // An iOS browser tab is the one case that is fixable by the user, so it must be
+  // judged before the generic unsupported path or it would be mislabelled.
+  function needsHomeScreenInstall() {
+    return isApplePlatform() && !isHomeScreenApp()
+  }
+
   // Turns the notification module's internal errors into something readable.
   // Kept out of notifications.ts so that module stays free of UI strings.
   function userFacingNotificationError(error: unknown) {
     const message = error instanceof Error ? error.message : ''
-    if (!pushSupported()) return "Phone notifications aren't supported on this device."
+
+    // A missing VAPID key or Supabase config is a deployment problem, so it is
+    // checked first and never gets reported as an incompatible device.
+    if (/not configured/i.test(message)) return 'Phone reminders are not set up on this build yet.'
     if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
       return 'Notifications are blocked. Enable them in your browser/device settings.'
     }
-    if (/not configured/i.test(message)) return 'Phone reminders are not set up on this build yet.'
+    if (needsHomeScreenInstall()) return HOME_SCREEN_HINT
+    if (!pushSupported()) return "Phone notifications aren't supported on this device."
     if (/No signed-in/i.test(message)) return 'Sign in to Tandaan before turning on phone reminders.'
     if (/incomplete push subscription/i.test(message)) return 'This browser returned an incomplete push subscription.'
     if (/refused to remove/i.test(message)) return 'The browser refused to remove the push subscription.'
@@ -520,12 +554,16 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   // one entity and reuses the existing persist helpers so the outbox, sync and
   // local-first ordering stay identical to every other write path. Each one
   // closes its own form afterwards, leaving the row itself untouched.
-  async function addTaskDirect() {
+  // Saving from the Add task row opens the existing due flow first, so the task
+  // is never written without the user seeing its schedule. The title is only
+  // cleared once persistTask has actually run in saveDueChoice, so a cancelled
+  // modal leaves the typed title intact.
+  function addTaskDirect() {
     const title = directTaskTitle.trim()
     if (!title) return
-    await persistTask(taskWithReminder(title, null, null), 'Task added')
-    setDirectTaskTitle('')
-    setExpandedAdd(null)
+    setDuePrompt({ title })
+    setDueDate('')
+    setDueTime('')
   }
 
   async function addShoppingDirect() {
@@ -569,7 +607,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         setDuePrompt({ title })
         setDueDate('')
         setDueTime('')
-        setDueStage('choice')
       }
       return true
     }
@@ -600,41 +637,29 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     return true
   }
 
-  // Opening the picker is the only place the reminder default needs seeding;
-  // the time row re-seeds it when the user adds or clears a time.
-  function openDueDetails(date: string, time: string) {
-    setDueDate(date)
-    setDueTime(time)
-    setDueReminderOption(defaultReminderOption(time))
-    setDueStage('details')
-  }
-
-      function selectQuickDue(mode: 'today' | 'tomorrow') {
-        const selected = mode === 'today' ? localISODate(new Date()) : tomorrowISO()
-        openDueDetails(selected, '')
-      }
-
-  async function saveDueChoice(mode: 'custom' | 'none') {
+  // Single write path for the due modal: builds the task with the existing
+  // reminder logic, persists it once, then closes and resets. Scheduling a
+  // reminder here never touches the phone's push subscription.
+  async function saveDueChoice(mode: 'dated' | 'none') {
     if (!duePrompt) return
+    const title = duePrompt.title
+
     if (mode === 'none') {
-      const task = taskWithReminder(duePrompt.title, null, null)
+      const task = taskWithReminder(title, null, null)
       await persistTask(task, 'Task saved')
-      setDuePrompt(null)
-      setDueDate('')
-      setDueTime('')
-      setDueStage('choice')
-      return
+    } else {
+      const nextDate = dueDate || null
+      const nextTime = nextDate && dueTime ? dueTime : null
+      if (!nextDate) return
+      const task = taskWithReminder(title, nextDate, nextTime, dueReminderOption)
+      await persistTask(task, 'Task saved')
     }
 
-    const nextDate = dueDate || null
-    const nextTime = nextDate && dueTime ? dueTime : null
-    if (!nextDate) return
-    const task = taskWithReminder(duePrompt.title, nextDate, nextTime, dueReminderOption)
-    await persistTask(task, 'Task saved')
     setDuePrompt(null)
     setDueDate('')
     setDueTime('')
-    setDueStage('choice')
+    setDirectTaskTitle('')
+    setExpandedAdd(null)
   }
 
   function startEditTask(task: Task) {
@@ -987,45 +1012,48 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       {duePrompt && (
         <div className="modal-backdrop">
           <div className="modal card">
-            <div className="modal-header"><div><strong>When is this due?</strong><div className="modal-subtitle">{duePrompt.title}</div></div><button className="icon-btn" onClick={() => { setDuePrompt(null); setDueStage('choice') }}><X /></button></div>
-            {dueStage === 'choice' ? (
-              <>
-                <div className="choice-grid">
-                  <button className="choice-card" onClick={() => selectQuickDue('today')}>Today</button>
-                  <button className="choice-card" onClick={() => selectQuickDue('tomorrow')}>Tomorrow</button>
-                  <button className="choice-card wide" onClick={() => openDueDetails(dueDate || localISODate(new Date()), '')}>Choose date</button>
-                  <button className="choice-card wide" onClick={() => void saveDueChoice('none')}>No due date</button>
-                </div>
-              </>
-            ) : (
-              <div className="custom-due card-inner">
-                <label className="due-row" htmlFor="due-date-input">
-                  <span className="due-row-icon"><CalendarPlus size={17} /></span>
-                  <span className="due-row-text"><span className="due-row-label">Due date</span><strong>{dueDate}</strong></span>
-                  <input id="due-date-input" className="due-date-overlay" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} aria-label="Due date" />
-                </label>
-                <div className="due-row">
-                  <span className="due-row-icon"><Clock3 size={17} /></span>
-                  <span className="due-row-text">
-                    <span className="due-row-label">Time <em>optional</em></span>
-                    {dueTime
-                      ? <strong>{dueTime}</strong>
-                      : <button type="button" className="due-row-placeholder" onClick={() => window.setTimeout(() => dueTimeRef.current?.focus(), 80)}>Add time</button>}
-                  </span>
-                  <input ref={dueTimeRef} className="due-time-overlay" type="time" value={dueTime} aria-label="Optional time" onChange={e => { setDueTime(e.target.value); setDueReminderOption(defaultReminderOption(e.target.value)) }} />
-                  {dueTime && <button type="button" className="due-row-clear" aria-label="Clear time" onClick={() => { setDueTime(''); setDueReminderOption(defaultReminderOption('')) }}><X size={15} /></button>}
-                </div>
-                <div className="reminder-block">
-                  <span className="due-row-label">Remind me</span>
-                  <div className="reminder-chips">
-                    {REMINDER_OPTIONS.map(option => (
-                      <button key={option.id} type="button" className={dueReminderOption === option.id ? 'reminder-chip active' : 'reminder-chip'} aria-pressed={dueReminderOption === option.id} onClick={() => setDueReminderOption(option.id)}>{option.label}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="modal-actions"><button className="primary full" onClick={() => void saveDueChoice('custom')}><CalendarPlus size={17} /> Save</button></div>
+            <div className="modal-header"><div><strong>When is this due?</strong><div className="modal-subtitle">{duePrompt.title}</div></div><button className="icon-btn" onClick={() => setDuePrompt(null)}><X /></button></div>
+            {/* Single screen: pick a date, optionally a time, then save. No second screen, so nothing has to be navigated. */}
+            <div className="due-compact">
+              <span className="due-compact-label">Date</span>
+              <div className="due-choice-row">
+                <button type="button" className={dueDate === localISODate(new Date()) ? 'due-choice active' : 'due-choice'} onClick={() => setDueDate(localISODate(new Date()))}>Today</button>
+                <button type="button" className={dueDate === tomorrowISO() ? 'due-choice active' : 'due-choice'} onClick={() => setDueDate(tomorrowISO())}>Tomorrow</button>
               </div>
-            )}
+
+              <span className="due-compact-label">Time</span>
+              <div className="due-time-wrap">
+                <button type="button" className={!dueTime ? 'due-choice active' : 'due-choice'} onClick={() => { setDueTime(''); setDueReminderOption(defaultReminderOption('')) }}>No time</button>
+                {/* The native time input stays mounted and transparent on top of the
+                    "Set time" cell, reusing the existing overlay pattern, so tapping
+                    it opens the real OS picker on iOS. */}
+                <div className={dueTime ? 'due-choice-cell active' : 'due-choice-cell'}>
+                  <span className="due-choice-label">{dueTime || 'Set time'}</span>
+                  <input
+                    ref={dueTimeRef}
+                    className="due-time-input-overlay"
+                    type="time"
+                    value={dueTime}
+                    aria-label="Due time"
+                    onChange={e => { setDueTime(e.target.value); setDueReminderOption(defaultReminderOption(e.target.value)) }}
+                  />
+                </div>
+              </div>
+
+              <div className="reminder-block">
+                <span className="due-compact-label">Remind me</span>
+                <div className="reminder-chips">
+                  {REMINDER_OPTIONS.map(option => (
+                    <button key={option.id} type="button" className={dueReminderOption === option.id ? 'reminder-chip active' : 'reminder-chip'} aria-pressed={dueReminderOption === option.id} onClick={() => setDueReminderOption(option.id)}>{option.label}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="modal-actions">
+                <button className="primary full" disabled={!dueDate} onClick={() => void saveDueChoice('dated')}>Save task</button>
+                <button className="text-btn full" onClick={() => void saveDueChoice('none')}>No due date</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
