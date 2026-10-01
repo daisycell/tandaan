@@ -50,8 +50,45 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .primary, .secondary, .choice-card, .icon-btn { border-radius: 14px; }
 .primary { background: linear-gradient(135deg, var(--accent), var(--accent-strong)); color: #fff; border: 0; font-weight: 850; padding: 12px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 9px 22px color-mix(in srgb, var(--accent) 25%, transparent); }
 .primary:hover { filter: brightness(1.05); }
+.primary:disabled { background: var(--surface-3); color: var(--muted-2); box-shadow: none; cursor: not-allowed; filter: none; }
 .secondary { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); padding: 12px 16px; }
 .secondary:hover { border-color: var(--border-strong); background: var(--surface-3); }
+
+/* Due modal rows. The native date/time inputs are kept in the DOM and
+   stretched over the row as invisible overlays, so tapping the row opens the
+   platform picker while the label and value stay styled as app content. */
+.due-row { position:relative; display:flex; align-items:center; gap:11px; padding:12px 13px; border:1px solid var(--border); border-radius:14px; background:var(--surface-2); min-height:56px; }
+.due-row-icon { display:grid; place-items:center; color:var(--accent); flex:0 0 auto; }
+.due-row-text { display:flex; flex-direction:column; gap:3px; min-width:0; flex:1 1 auto; text-align:left; }
+.due-row-label { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+.due-row-label em { font-style:normal; color:var(--muted-2); }
+.due-row-placeholder { background:none; border:0; padding:0; text-align:left; color:var(--muted-2); font:inherit; cursor:pointer; }
+.due-row-clear { display:grid; place-items:center; width:28px; height:28px; flex:0 0 auto; border-radius:50%; border:1px solid var(--border); background:var(--surface-3); color:var(--muted); cursor:pointer; z-index:2; }
+.due-date-overlay, .due-time-overlay { position:absolute; inset:0; width:100%; height:100%; opacity:0; border:0; padding:0; margin:0; cursor:pointer; }
+.due-time-overlay { left:auto; }
+.due-row-clear ~ .due-time-overlay { right:44px; }
+
+.reminder-block { margin-top:12px; display:flex; flex-direction:column; gap:8px; }
+.reminder-chips { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.reminder-chip { padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); font-size:13px; font-weight:700; cursor:pointer; }
+.reminder-chip.active { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 16%, var(--surface-2)); color:var(--text); }
+
+/* Direct entry: always adds to one entity, no intent parsing. Deliberately
+   quiet so it reads as part of each section rather than a second form. Flat
+   surface, hairline border and a small square-ish accent button, sized to the
+   list cards below it. The name field takes the slack; qty/unit/price hold
+   fixed widths so the row never pushes the button off-screen. */
+.direct-add { display: flex; gap: 6px; margin: 0 0 10px; align-items: stretch; }
+.direct-add input { padding: 9px 11px; border-radius: 12px; min-height: 40px; background: var(--surface-2); font-size: 14px; min-width: 0; }
+.direct-add input::placeholder { color: var(--muted-2); }
+.direct-add input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.direct-add input.grow { flex: 1 1 auto; min-width: 0; }
+.direct-add input.num { flex: 0 0 58px; width: 58px; text-align: center; }
+.direct-add input.num.price { flex: 0 0 72px; width: 72px; }
+.direct-add input.unit { flex: 0 0 68px; width: 68px; }
+.direct-add-btn { flex: 0 0 auto; display: grid; place-items: center; width: 40px; min-height: 40px; padding: 0; border-radius: 12px; border: 1px solid var(--accent-border); background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); color: var(--accent); cursor: pointer; }
+.direct-add-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 26%, var(--surface-2)); }
+.direct-add-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 .app-shell { width: min(100%, 980px); margin: auto; padding: 20px 18px 70px; }
 .app-header { display:flex; justify-content:space-between; align-items:center; gap:12px; position:sticky; top:0; z-index:5; padding:8px 0 14px; backdrop-filter: blur(16px); background: linear-gradient(to bottom, var(--header-bg), var(--header-bg-fade), transparent); }
@@ -97,8 +134,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .voice-status { margin-top:8px; color:var(--muted-2); font-size:11px; text-align:center; }
 .inline-error { margin-top:10px; padding:11px 12px; border-radius:12px; background:rgba(251,113,133,.08); color:#ffc0ca; border:1px solid rgba(251,113,133,.2); }
 
-.section-block { margin-top:28px; }
-.section-heading { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:10px; }
+.section-block { margin-top:20px; }
+.section-heading { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:8px; }
 .section-heading h2 { margin:0; font-size:20px; letter-spacing:-.03em; }
 .section-heading span { color:var(--muted-2); font-size:12px; }
 .task-list { display:grid; gap:10px; }
@@ -113,6 +150,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .task-actions { display:flex; gap:6px; }
 .empty { padding:22px; color:var(--muted); text-align:center; }
 .purchase-total { padding:18px; display:flex; justify-content:space-between; align-items:flex-end; gap:12px; background:linear-gradient(145deg, color-mix(in srgb, var(--accent) 13%, var(--surface)), var(--surface)); }
+/* Keeps the entry row from crowding the total card it follows. */
+.purchase-total + .direct-add { margin-top: 10px; }
 .purchase-total span, .purchase-total small { color:var(--muted); display:block; font-size:12px; }
 .purchase-total strong { display:block; font-size:28px; margin-top:4px; letter-spacing:-.04em; }
 .purchase-dot { width:42px; height:42px; display:grid; place-items:center; border-radius:13px; background:var(--accent-soft); color:var(--accent); font-weight:900; border:1px solid var(--accent-border); }
@@ -812,4 +851,110 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .sync-warning { max-width:120px; font-size:10.5px; }
   .flagged-row { flex-direction:column; align-items:stretch; }
   .flagged-actions { justify-content:flex-end; }
+}
+
+/* Issue 3: full-screen list navigation and bounded long lists. */
+.summary-nav-card { width:100%; border:1px solid var(--border); color:var(--text); font:inherit; text-align:left; cursor:pointer; appearance:none; -webkit-appearance:none; }
+.summary-nav-card:hover { border-color:var(--border-strong); }
+.summary-nav-card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.preview-block .text-btn { margin-top:8px; }
+.full-page { margin-top:18px; }
+.subpage-header { display:flex; align-items:flex-start; gap:12px; margin-bottom:16px; }
+.subpage-header h1 { margin:0; font-size:clamp(26px,5vw,36px); letter-spacing:-.045em; }
+.subpage-header p { margin:5px 0 0; color:var(--muted); font-size:12px; line-height:1.45; }
+.back-btn { flex:0 0 auto; display:inline-flex; align-items:center; gap:7px; }
+.filter-tabs { display:flex; flex-wrap:wrap; gap:7px; }
+.filter-tab { border:1px solid var(--border); background:var(--surface-2); color:var(--muted); border-radius:999px; padding:9px 12px; font-size:11px; font-weight:800; }
+.filter-tab:hover { border-color:var(--border-strong); color:var(--text); }
+.filter-tab.active { border-color:var(--accent-border); color:var(--accent); background:var(--accent-soft); }
+.compact-section { margin-top:16px; }
+.full-list { gap:9px; }
+.date-group-label { margin-top:8px; padding:3px 4px; color:var(--muted-2); font-size:10px; font-weight:850; letter-spacing:.07em; text-transform:uppercase; }
+.date-group-label:not(:first-child) { margin-top:14px; }
+.collapsed-panel { border:1px solid var(--border); border-radius:18px; background:var(--surface); padding:10px 12px 14px; }
+.collapsed-panel summary { cursor:pointer; color:var(--text); font-size:12px; font-weight:800; padding:5px 2px; }
+.collapsed-panel .full-list { margin-top:9px; }
+.load-more { display:flex; width:100%; justify-content:center; margin-top:10px; }
+.purchase-toolbar { padding:14px; display:grid; gap:12px; }
+.purchase-search { display:flex; align-items:center; gap:8px; padding:0 2px; color:var(--muted-2); }
+.purchase-search input { border:0; box-shadow:none; padding:11px 6px; background:transparent; }
+.purchase-search input:focus { box-shadow:none; }
+.purchase-range-tabs { overflow:auto; flex-wrap:nowrap; padding-bottom:2px; }
+.purchase-range-tabs .filter-tab { white-space:nowrap; }
+.custom-range { padding-top:1px; }
+.custom-range label { display:block; margin-bottom:6px; color:var(--muted); font-size:11px; }
+.purchase-date-heading { display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-top:8px; padding:4px 4px 0; }
+.purchase-date-heading strong { font-size:12px; }
+.purchase-date-heading span { color:var(--muted-2); font-size:10px; text-align:right; }
+@media (max-width:620px) {
+  .subpage-header { flex-direction:column; }
+  .back-btn { width:100%; justify-content:center; min-height:44px; }
+  .filter-tabs { gap:6px; }
+  .filter-tab { padding:8px 10px; font-size:10.5px; }
+  .purchase-toolbar { padding:12px; }
+  .purchase-range-tabs { margin:0 -4px; padding-left:4px; padding-right:4px; }
+  .purchase-date-heading { align-items:flex-start; flex-direction:column; gap:3px; }
+  .purchase-date-heading span { text-align:left; }
+}
+
+/* Direct entry on phones: the name field takes the full first row, the small
+   fields and the button share the second. Wrapping beats squeezing Qty/Unit/
+   Price down to unreadable widths, and keeps the button at a 40px tap target. */
+@media (max-width:620px) {
+  .direct-add { flex-wrap: wrap; }
+  .direct-add input.grow { flex: 1 1 100%; }
+  .direct-add input.num { flex: 1 1 0; width: auto; }
+  .direct-add input.num.price { flex: 1.2 1 0; width: auto; }
+  .direct-add input.unit { flex: 1 1 0; width: auto; }
+  .direct-add-btn { flex: 0 0 40px; }
+}
+
+/* The gesture itself remains unchanged; per-row swipe instructions are intentionally omitted. */
+.swipe-delete-hint { display:none; }
+
+/* Personal backgrounds: keep the photo visible without sacrificing text contrast. */
+body {
+  background-image:
+    linear-gradient(rgba(5, 3, 10, .34), rgba(5, 3, 10, .56)),
+    var(--theme-wallpaper),
+    radial-gradient(circle at top, color-mix(in srgb, var(--accent) 18%, transparent) 0%, var(--bg) 52%);
+  background-size: cover, contain, auto;
+  background-position: center, center top, top;
+  background-repeat: no-repeat;
+}
+
+.purchase-total + .task-list {
+  margin-top: 16px;
+}
+
+.custom-theme-preview-bg {
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: .62;
+  filter: saturate(.98) brightness(.94);
+}
+
+.custom-theme-preview-overlay {
+  background: linear-gradient(180deg, rgba(0,0,0,.08), rgba(0,0,0,.42));
+}
+
+@media (max-width: 640px) {
+  body {
+    background-size: cover, contain, auto;
+    background-position: center, center top, top;
+    background-attachment: scroll;
+  }
+
+  .purchase-total + .task-list {
+    margin-top: 18px;
+  }
+
+  .custom-theme-preview-bg {
+    opacity: .68;
+  }
+
+  .custom-theme-preview-overlay {
+    background: linear-gradient(180deg, rgba(0,0,0,.05), rgba(0,0,0,.34));
+  }
 }

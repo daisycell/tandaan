@@ -23,7 +23,7 @@ export type ParsedInput = {
 }
 
 const futureTask = /\b(i['’]?ll|i will|i['’]?m going to|i am going to|later|remind me|due|i need to|need to)\b/i
-const taskVerb = /\b(pay|finish|submit|call|send|do|complete|clean|study|go to|meet|remember to|remind me)\b/i
+const taskVerb = /\b(pay|finish|submit|call|send|do|complete|clean|study|go to|meet|remember to|remind me|write|draft|calculate|calc|check|review|prepare|plan|schedule|organize|update|fix|set|make|create|fill|print|read|reply|email|text|message|open|close|bring|take|pick up|drop off|visit|attend|practice|work|work on|compute|figure out|list)\b/i
 const shoppingVerb = /\b(buy|need to buy|shopping|mabakal|bakal|palit|paliton|palit ko|pangbakal|mupalit|palita|palitan)\b/i
 const purchaseVerb = /\b(i bought|i purchased|bought|purchased|nabakal|nakapalit|nabili|napalit|nabakal ko|nakapalit ko|nabili ko)\b/i
 const noteVerb = /\b(note|take note|note down)\b/i
