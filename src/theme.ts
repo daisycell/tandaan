@@ -11,6 +11,7 @@ export const THEME_OPTIONS: ThemeOption[] = [
   { id: 'cat', name: 'Cat', description: 'Cozy purple', swatch: '#8b5cf6' },
   { id: 'dog', name: 'Golden Retriever', description: 'Warm and cheerful', swatch: '#d89b2b' },
   { id: 'capybara', name: 'Capybara', description: 'Calm and earthy', swatch: '#8a7658' },
+  { id: 'strawberry', name: 'Strawberry', description: 'Sweet and rosy', swatch: '#ef476f' },
 ]
 
 export const DEFAULT_THEME: ThemeId = 'cat'
@@ -20,6 +21,7 @@ export const STICKERS: Record<ThemeId, string[]> = {
   cat: Array.from({ length: 10 }, (_, i) => `ca${i + 1}.png`),
   dog: Array.from({ length: 10 }, (_, i) => `do${i + 1}.png`),
   capybara: Array.from({ length: 10 }, (_, i) => `cap${i + 1}.png`),
+  strawberry: Array.from({ length: 10 }, (_, i) => `st${i + 1}.png`),
 }
 
 export function stickerUrl(theme: ThemeId, filename: string) {
@@ -46,7 +48,7 @@ export const COLOR_OPTIONS: ColorOption[] = [
   { id: 'maroon', name: 'Maroon', swatch: '#a4506b' },
   { id: 'pink', name: 'Pink', swatch: '#e89bb0' },
   { id: 'yellow', name: 'Yellow', swatch: '#d9b84f' },
-  { id: 'blue', name: 'Blue', swatch: '#7aa5e0' },
+  { id: 'purple', name: 'Purple', swatch: '#8b5cf6' },
 ]
 
 export type Palette = {
@@ -88,6 +90,12 @@ const BASE_PALETTES: Record<ThemeId, Palette> = {
     border: '#433426', borderStrong: '#63503a',
     headerBg: 'rgba(11,7,21,.96)', headerBgFade: 'rgba(11,7,21,.8)',
   },
+  strawberry: {
+    accent: '#ef476f', accentStrong: '#d9365f', accentSoft: 'rgba(239,71,111,.16)', accentBorder: 'rgba(255,168,190,.34)',
+    bg: '#16080d', bgSecondary: '#220d14', surface: 'rgba(34,13,20,.93)', surface2: '#2a1019', surface3: '#3b1722',
+    border: '#552333', borderStrong: '#733044',
+    headerBg: 'rgba(22,8,13,.96)', headerBgFade: 'rgba(22,8,13,.8)',
+  },
 }
 
 type ColorSpec = {
@@ -109,7 +117,7 @@ const COLOR_SPECS: Record<Exclude<ThemeColorId, 'original'>, ColorSpec> = {
   maroon: { name: 'Maroon', swatch: '#a4506b', accent: '#a4506b', accentStrong: '#843d54', accentBorder: 'rgba(214,150,172,.32)', tint: '#481f2d', tintWeight: 0.26 },
   pink: { name: 'Pink', swatch: '#e89bb0', accent: '#e89bb0', accentStrong: '#d4798f', accentBorder: 'rgba(246,196,210,.34)', tint: '#4f2739', tintWeight: 0.26 },
   yellow: { name: 'Yellow', swatch: '#d9b84f', accent: '#d9b84f', accentStrong: '#bb9a34', accentBorder: 'rgba(240,216,150,.34)', tint: '#493c12', tintWeight: 0.26 },
-  blue: { name: 'Blue', swatch: '#7aa5e0', accent: '#7aa5e0', accentStrong: '#5b87c9', accentBorder: 'rgba(178,205,244,.34)', tint: '#1e3357', tintWeight: 0.26 },
+  purple: { name: 'Purple', swatch: '#8b5cf6', accent: '#8b5cf6', accentStrong: '#7c3aed', accentBorder: 'rgba(196,181,253,.34)', tint: '#3b245f', tintWeight: 0.26 },
 }
 
 function hexToRgb(hex: string) {
@@ -177,6 +185,7 @@ export const COLOR_PALETTES: Record<ThemeId, Record<ThemeColorId, Palette>> = {
   cat: Object.fromEntries(COLOR_OPTIONS.map(c => [c.id, buildPalette('cat', c.id)])) as Record<ThemeColorId, Palette>,
   dog: Object.fromEntries(COLOR_OPTIONS.map(c => [c.id, buildPalette('dog', c.id)])) as Record<ThemeColorId, Palette>,
   capybara: Object.fromEntries(COLOR_OPTIONS.map(c => [c.id, buildPalette('capybara', c.id)])) as Record<ThemeColorId, Palette>,
+  strawberry: Object.fromEntries(COLOR_OPTIONS.map(c => [c.id, buildPalette('strawberry', c.id)])) as Record<ThemeColorId, Palette>,
 }
 
 export function isThemeColorId(value: string | null | undefined): value is ThemeColorId {

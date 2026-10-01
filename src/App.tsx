@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Mic, Pencil, Plus, Settings, ShoppingCart, Sparkles, Square, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
+import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Pencil, Plus, Settings, ShoppingCart, Sparkles, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
 import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeColor, setLocalThemeCustomizations } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { parseInput, type ParsedInput, type ParsedLine } from './parser'
+import { parseInputWithAI } from './intentAI'
 import { supabase } from './supabase'
 import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError, purgeLocalTombstones, visible, getFlaggedOutboxItems, retryOutboxItem, discardOutboxItem, MAX_RETRIES } from './sync'
 import type { OutboxItem } from './db'
 import { TurnstileWidget } from './components/TurnstileWidget'
-import { calculateReminderAt } from './reminders'
+import { calculateReminderAt, resolveReminder, defaultReminderOption, REMINDER_OPTIONS, type ReminderOptionId } from './reminders'
 import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
-import { prepareVoice, startVoiceCapture, transcribeVoice, cancelVoiceEngine, isVoiceSupported, VOICE_UNSUPPORTED_MESSAGE, type VoiceRecorder } from './voice'
 import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
@@ -61,8 +61,9 @@ const DEFAULT_THEME_CUSTOMIZATIONS: ThemeCustomizations = {
     cat: STICKERS.cat.slice(),
     dog: STICKERS.dog.slice(),
     capybara: STICKERS.capybara.slice(),
+    strawberry: STICKERS.strawberry.slice(),
   },
-  backgrounds: { cat: '', dog: '', capybara: '' },
+  backgrounds: { cat: '', dog: '', capybara: '', strawberry: '' },
 }
 
 function normalizeThemeCustomizations(value?: Partial<ThemeCustomizations> | null): ThemeCustomizations {
@@ -71,11 +72,13 @@ function normalizeThemeCustomizations(value?: Partial<ThemeCustomizations> | nul
       cat: STICKERS.cat.slice(),
       dog: STICKERS.dog.slice(),
       capybara: STICKERS.capybara.slice(),
+      strawberry: STICKERS.strawberry.slice(),
     },
     backgrounds: {
       cat: value?.backgrounds?.cat ?? '',
       dog: value?.backgrounds?.dog ?? '',
       capybara: value?.backgrounds?.capybara ?? '',
+      strawberry: value?.backgrounds?.strawberry ?? '',
     },
   }
 }
@@ -100,15 +103,22 @@ function shortUnit(unit?: string | null) {
   return map[unit] ?? unit
 }
 
-function taskWithReminder(title: string, dueDate: string | null, dueTime: string | null): Task {
-  const now = new Date().toISOString()
-  return {
-    id: newId(), title, isCompleted: false, dueDate, dueTime,
-    reminderEnabled: Boolean(dueDate), reminderMinutesBefore: 1440,
-    reminderAt: calculateReminderAt(dueDate, dueTime, 1440), reminderSentAt: null,
-    createdAt: now, updatedAt: now
+  function taskWithReminder(title: string, dueDate: string | null, dueTime: string | null, reminderOption?: ReminderOptionId): Task {
+    const now = new Date().toISOString()
+    // Omitting the option preserves the original 24h lead, so the parser and
+    // Quick Add paths keep behaving exactly as before.
+    const reminder = reminderOption
+      ? resolveReminder(dueDate, dueTime, reminderOption)
+      : { enabled: Boolean(dueDate), minutesBefore: 1440, reminderAt: calculateReminderAt(dueDate, dueTime, 1440) }
+    return {
+      id: newId(), title, isCompleted: false, dueDate, dueTime,
+      reminderEnabled: reminder.enabled,
+      reminderMinutesBefore: reminder.minutesBefore ?? 1440,
+      reminderAt: reminder.reminderAt,
+      reminderSentAt: null,
+      createdAt: now, updatedAt: now
+    }
   }
-}
 
 export default function App() {
   const [name, setName] = useState('')
@@ -140,6 +150,7 @@ export default function App() {
   const [dueDate, setDueDate] = useState('')
   const [dueTime, setDueTime] = useState('')
   const [dueStage, setDueStage] = useState<'choice' | 'details'>('choice')
+  const [dueReminderOption, setDueReminderOption] = useState<ReminderOptionId>('1d')
 
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [editingShopping, setEditingShopping] = useState<ShoppingItem | null>(null)
@@ -159,18 +170,20 @@ export default function App() {
   const [editPurchaseUnit, setEditPurchaseUnit] = useState('')
   const [editPurchasePrice, setEditPurchasePrice] = useState('')
 
-  const [voiceState, setVoiceState] = useState<'idle' | 'checking-model' | 'loading-model' | 'recording' | 'transcribing'>('idle')
+  // Direct entry fields. These bypass the parser entirely and always target one
+  // entity, unlike Quick Add which infers intent from natural language.
+  const [directTaskTitle, setDirectTaskTitle] = useState('')
+  const [directShopName, setDirectShopName] = useState('')
+  const [directShopQty, setDirectShopQty] = useState('')
+  const [directShopUnit, setDirectShopUnit] = useState('')
+  const [directPurchaseName, setDirectPurchaseName] = useState('')
+  const [directPurchaseQty, setDirectPurchaseQty] = useState('')
+  const [directPurchaseUnit, setDirectPurchaseUnit] = useState('')
+  const [directPurchasePrice, setDirectPurchasePrice] = useState('')
+
   // null until the capability probe resolves, so the Speak button is not
   // disabled during the check itself.
-  const [voiceSupported, setVoiceSupported] = useState<boolean | null>(null)
-  const [voiceLevel, setVoiceLevel] = useState(0)
-  const [voiceSeconds, setVoiceSeconds] = useState(0)
-  const [voiceProgress, setVoiceProgress] = useState<number | null>(null)
-  const [voiceError, setVoiceError] = useState('')
   const dueTimeRef = useRef<HTMLInputElement | null>(null)
-  const [voiceTranscript, setVoiceTranscript] = useState('')
-  const [voiceReview, setVoiceReview] = useState<ParsedInput | null>(null)
-  const recorderRef = useRef<VoiceRecorder | null>(null)
   const ambiguitySaveLockRef = useRef(false)
 
 const [remindersEnabled, setRemindersEnabled] = useState(false)
@@ -251,7 +264,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
 
     return () => {
       cancelled = true
-      recorderRef.current?.cancel()
     }
   }, [])
 
@@ -270,18 +282,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     }
     window.addEventListener('online', handleOnline)
     return () => window.removeEventListener('online', handleOnline)
-  }, [])
-
-  // Probe voice capability once on load so an unsupported device gets a disabled
-  // Speak button and an explanation up front, instead of tapping through to a
-  // failure. prepareVoice still re-checks on tap, because the probe is async and
-  // availability can change (e.g. returning from the background).
-  useEffect(() => {
-    let cancelled = false
-    void isVoiceSupported()
-      .then(supported => { if (!cancelled) setVoiceSupported(supported) })
-      .catch(() => { if (!cancelled) setVoiceSupported(true) })
-    return () => { cancelled = true }
   }, [])
 
   // Watch the outbox so a write the server refused is surfaced instead of
@@ -316,11 +316,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     setFlaggedItems(await getFlaggedOutboxItems())
   }
 
-  useEffect(() => {
-    if (voiceState !== 'recording') return
-    const id = window.setInterval(() => setVoiceSeconds(seconds => seconds + 1), 1000)
-    return () => window.clearInterval(id)
-  }, [voiceState])
+
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -460,6 +456,39 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     void syncNow(message)
   }
 
+  // Direct entry: no parsing, no intent guessing. Each handler targets exactly
+  // one entity and reuses the existing persist helpers so the outbox, sync and
+  // local-first ordering stay identical to every other write path.
+  async function addTaskDirect() {
+    const title = directTaskTitle.trim()
+    if (!title) return
+    await persistTask(taskWithReminder(title, null, null), 'Task added')
+    setDirectTaskTitle('')
+  }
+
+  async function addShoppingDirect() {
+    const name = directShopName.trim()
+    if (!name) return
+    const now = new Date().toISOString()
+    const item: ShoppingItem = { id: newId(), name, quantity: directShopQty === '' ? null : Number(directShopQty), unit: directShopUnit.trim() || null, expectedPrice: null, isPurchased: false, createdAt: now, updatedAt: now }
+    await persistShopping(item, 'Shopping item added')
+    setDirectShopName('')
+    setDirectShopQty('')
+    setDirectShopUnit('')
+  }
+
+  async function addPurchaseDirect() {
+    const name = directPurchaseName.trim()
+    if (!name) return
+    const now = new Date().toISOString()
+    const item: Purchase = { id: newId(), itemName: name, quantity: directPurchaseQty === '' ? null : Number(directPurchaseQty), unit: directPurchaseUnit.trim() || null, price: directPurchasePrice === '' ? null : Number(directPurchasePrice), currency: 'PHP', purchasedAt: now, notes: null, createdAt: now, updatedAt: now }
+    await persistPurchase(item, 'Purchase added')
+    setDirectPurchaseName('')
+    setDirectPurchaseQty('')
+    setDirectPurchaseUnit('')
+    setDirectPurchasePrice('')
+  }
+
   async function saveParsed(parsed: ParsedInput, forcedIntent?: 'task' | 'shopping' | 'purchase') {
     if (parsed.ambiguous && !forcedIntent) {
       setAmbiguousInput(parsed)
@@ -511,18 +540,36 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   async function addFromText() {
     const raw = input.trim()
     if (!raw) return
-    const parsed = parseInput(raw)
+
+    // Normal entries must never wait for the AI model. The deterministic
+    // parser handles clear tasks, shopping items, purchases and structured
+    // details immediately. Only an actually ambiguous result uses AI.
+    const fastParsed = parseInput(raw)
     setInput('')
-    await saveParsed(parsed)
+
+    if (!fastParsed.ambiguous) {
+      await saveParsed(fastParsed)
+      return
+    }
+
+    setStatus('Checking…')
+    const aiParsed = await parseInputWithAI(raw)
+    await saveParsed(aiParsed)
   }
 
-  function selectQuickDue(mode: 'today' | 'tomorrow') {
-    const selected = mode === 'today' ? localISODate(new Date()) : tomorrowISO()
-    setDueDate(selected)
-    setDueTime('')
+  // Opening the picker is the only place the reminder default needs seeding;
+  // the time row re-seeds it when the user adds or clears a time.
+  function openDueDetails(date: string, time: string) {
+    setDueDate(date)
+    setDueTime(time)
+    setDueReminderOption(defaultReminderOption(time))
     setDueStage('details')
-    window.setTimeout(() => dueTimeRef.current?.focus(), 80)
   }
+
+      function selectQuickDue(mode: 'today' | 'tomorrow') {
+        const selected = mode === 'today' ? localISODate(new Date()) : tomorrowISO()
+        openDueDetails(selected, '')
+      }
 
   async function saveDueChoice(mode: 'custom' | 'none') {
     if (!duePrompt) return
@@ -540,7 +587,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     const nextTime = nextDate && dueTime ? dueTime : null
     if (!nextDate) return
     void ensureReminders()
-    const task = taskWithReminder(duePrompt.title, nextDate, nextTime)
+    const task = taskWithReminder(duePrompt.title, nextDate, nextTime, dueReminderOption)
     await persistTask(task, 'Task saved')
     setDuePrompt(null)
     setDueDate('')
@@ -561,7 +608,23 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       const nextDate = editDueDate || null
       const nextTime = nextDate && editDueTime ? editDueTime : null
       const dateChanged = nextDate !== editingTask.dueDate || nextTime !== editingTask.dueTime
-      const updated: Task = { ...editingTask, title: editTitle.trim() || editingTask.title, dueDate: nextDate, dueTime: nextTime, reminderEnabled: Boolean(nextDate), reminderMinutesBefore: 1440, reminderAt: dateChanged ? calculateReminderAt(nextDate, nextTime, 1440) : (editingTask.reminderAt ?? calculateReminderAt(nextDate, nextTime, 1440)), reminderSentAt: dateChanged ? null : (editingTask.reminderSentAt ?? null), updatedAt: new Date().toISOString() }
+      // Reminder choice is preserved across edits: when only the title changes the
+    // existing reminderAt/minutes are kept verbatim. If the date or time moves,
+    // re-anchor the reminder using the offset the task already had. 'none' is
+    // distinguishable because reminderMinutesBefore is null in that case.
+    const keepMinutes = editingTask.reminderMinutesBefore ?? 1440
+    const reminderEnabled = Boolean(nextDate) && editingTask.reminderEnabled && keepMinutes > 0
+    const updated: Task = {
+      ...editingTask,
+      title: editTitle.trim() || editingTask.title,
+      dueDate: nextDate,
+      dueTime: nextTime,
+      reminderEnabled,
+      reminderMinutesBefore: reminderEnabled ? keepMinutes : null,
+      reminderAt: reminderEnabled ? (dateChanged ? calculateReminderAt(nextDate, nextTime, keepMinutes) : (editingTask.reminderAt ?? calculateReminderAt(nextDate, nextTime, keepMinutes))) : null,
+      reminderSentAt: dateChanged ? null : (editingTask.reminderSentAt ?? null),
+      updatedAt: new Date().toISOString()
+    }
       if (nextDate) void ensureReminders()
       await persistTask(updated, 'Task updated')
       setEditingTask(null)
@@ -639,93 +702,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     }
   }
 
-  async function transcribeCaptured(result: { blob: Blob; durationMs: number }) {
-    setVoiceState('transcribing')
-    setVoiceLevel(0)
-    setVoiceProgress(null)
-    setStatus('Transcribing on this device…')
-    try {
-      const transcript = await transcribeVoice(result.blob, result.durationMs)
-      setVoiceTranscript(transcript)
-      setInput(transcript)
-      setVoiceReview(parseInput(transcript))
-      setStatus('Voice transcript ready · review before saving')
-    } catch (error) {
-      setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.')
-      setStatus('Voice is ready to try again')
-    } finally {
-      setVoiceState('idle')
-      setVoiceLevel(0)
-      setVoiceProgress(null)
-      recorderRef.current = null
-    }
-  }
-
-  async function startVoice() {
-    setVoiceError('')
-    setVoiceTranscript('')
-    setStatus('Starting voice…')
-    setVoiceSeconds(0)
-
-    if (voiceState === 'checking-model' || voiceState === 'loading-model' || voiceState === 'transcribing') return
-
-    if (voiceState === 'recording') {
-      const recorder = recorderRef.current
-      if (recorder) {
-        setStatus('Finishing recording…')
-        void recorder.stop().catch(error => {
-          setVoiceError(error instanceof Error ? error.message : 'Could not stop the recording.')
-        })
-      }
-      return
-    }
-
-    try {
-      setVoiceState('checking-model')
-      setStatus('Checking voice on this device…')
-      await prepareVoice(progress => {
-        setVoiceState('loading-model')
-        setVoiceProgress(progress)
-        setStatus(`Loading voice model… ${progress}%`)
-      })
-      setVoiceProgress(null)
-      setStatus('Voice ready · listening now')
-
-      // The same Speak tap continues into recording after model preparation.
-      const recorder = await startVoiceCapture(level => setVoiceLevel(level), 6_500)
-      recorderRef.current = recorder
-      setVoiceState('recording')
-      setStatus('Listening… tap Stop when you finish')
-      void recorder.finished
-        .then(result => transcribeCaptured(result))
-        .catch(error => {
-          setVoiceError(error instanceof Error ? error.message : 'Recording failed.')
-          setVoiceState('idle')
-          setVoiceLevel(0)
-          recorderRef.current = null
-        })
-    } catch (error) {
-      cancelVoiceEngine()
-      setVoiceError(error instanceof Error ? error.message : 'Could not start voice on this device.')
-      setStatus('Voice is ready to try again')
-      setVoiceState('idle')
-      setVoiceLevel(0)
-      setVoiceProgress(null)
-      recorderRef.current = null
-    }
-  }
-
-  async function saveVoiceReview() {
-    if (!voiceReview) return
-    if (voiceReview.ambiguous) {
-      setAmbiguousInput(voiceReview)
-      setVoiceReview(null)
-      return
-    }
-    const saved = await saveParsed(voiceReview)
-    if (saved && !duePrompt) setVoiceReview(null)
-  }
-
   async function chooseAmbiguousIntent(intent: 'shopping' | 'purchase') {
     if (!ambiguousInput || ambiguitySaveLockRef.current) return
     ambiguitySaveLockRef.current = true
@@ -787,13 +763,15 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
 
   if (!name) {
     return (
-      <main className="onboarding">
-        <div className="brand-mark"><ShoppingCart size={40} /></div>
+      <main className="onboarding" style={{ gap: 10 }}>
+        <div className="brand-mark"><Pencil size={36} /></div>
         <div className="brand">Tandaan</div>
-        <p>Your offline-first everyday memory.</p>
-        <label>What should we call you?</label>
-        <input autoFocus value={draftName} onChange={e => setDraftName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') completeOnboarding() }} placeholder="Your name" />
-         <button className="primary" onClick={completeOnboarding}><Sparkles size={18} /> Continue</button>
+        <p style={{ margin: '-2px 0 4px' }}>Your offline-first everyday memory.</p>
+        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label htmlFor="onboarding-name">Your name</label>
+          <input id="onboarding-name" autoFocus value={draftName} onChange={e => setDraftName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') completeOnboarding() }} placeholder="e.g. Daisy" />
+        </div>
+        <button className="primary" onClick={completeOnboarding} disabled={!draftName.trim()} style={{ width: '100%' }}>Continue</button>
      </main>
     )
   }
@@ -825,18 +803,15 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addFromText() }} placeholder="Try: Pay electricity tomorrow at 6 PM" />
           <button className="primary add-btn" onClick={() => void addFromText()}><Plus size={18} /> Add</button>
         </div>
-        <button className={voiceState === 'recording' ? 'voice-btn recording' : voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model' ? 'voice-btn transcribing' : voiceSupported === false ? 'voice-btn unsupported' : 'voice-btn'} onClick={() => void startVoice()} disabled={voiceSupported === false || voiceState === 'transcribing' || voiceState === 'checking-model' || voiceState === 'loading-model'} title={voiceSupported === false ? VOICE_UNSUPPORTED_MESSAGE : undefined} aria-label={voiceSupported === false ? VOICE_UNSUPPORTED_MESSAGE : undefined}>
-          {voiceState === 'recording' ? <Square size={18} /> : <Mic size={19} />}
-          {voiceSupported === false ? 'Voice unavailable' : voiceState === 'recording' ? `Listening · ${voiceSeconds}s` : voiceState === 'checking-model' ? 'Checking voice…' : voiceState === 'loading-model' ? (voiceProgress != null ? `Setting up voice · ${voiceProgress}%` : 'Setting up voice…') : voiceState === 'transcribing' ? 'Transcribing locally…' : 'Speak'}
-          {voiceState === 'recording' && <span className="voice-meter"><span style={{ transform: `scaleY(${0.2 + voiceLevel})` }} /></span>}
-        </button>
-        {voiceSupported === false && <div className="inline-error">{VOICE_UNSUPPORTED_MESSAGE}</div>}
-        {voiceError && <div className="inline-error">{voiceError}</div>}
         {signInError && <div className="inline-error">{signInError.message}</div>}
       </section>
 
       <section className="section-block">
         <div className="section-heading"><h2>Today</h2><span>{tasks.length} total</span></div>
+        <div className="direct-add">
+          <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Add a task" aria-label="Add a task directly" />
+          <button className="direct-add-btn" onClick={() => void addTaskDirect()} disabled={!directTaskTitle.trim()} aria-label="Add task"><Plus size={17} /></button>
+        </div>
         <div className="task-list">
           {tasks.length === 0 && <div className="empty card">No tasks yet. Add one above.</div>}
           {tasks.map(task => (
@@ -859,6 +834,12 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
 
       <section className="section-block">
         <div className="section-heading"><h2>Shopping</h2><span>{liveShopping.filter(i => !i.isPurchased).length} remaining</span></div>
+        <div className="direct-add">
+          <input className="grow" value={directShopName} onChange={e => setDirectShopName(e.target.value)} placeholder="Add an item" aria-label="Add a shopping item directly" />
+          <input className="num" type="number" min="0" step="any" value={directShopQty} onChange={e => setDirectShopQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
+          <input className="unit" value={directShopUnit} onChange={e => setDirectShopUnit(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Unit" aria-label="Unit" />
+          <button className="direct-add-btn" onClick={() => void addShoppingDirect()} disabled={!directShopName.trim()} aria-label="Add shopping item"><Plus size={17} /></button>
+        </div>
         <div className="task-list">
           {shopping.length === 0 && <div className="empty card">No shopping items yet.</div>}
           {shopping.map(item => (
@@ -879,6 +860,13 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       <section className="section-block">
         <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
         <div className="purchase-total card"><div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small></div>
+        <div className="direct-add">
+          <input className="grow" value={directPurchaseName} onChange={e => setDirectPurchaseName(e.target.value)} placeholder="Add a purchase" aria-label="Add a purchase directly" />
+          <input className="num" type="number" min="0" step="any" value={directPurchaseQty} onChange={e => setDirectPurchaseQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
+          <input className="unit" value={directPurchaseUnit} onChange={e => setDirectPurchaseUnit(e.target.value)} placeholder="Unit" aria-label="Unit" />
+          <input className="num price" type="number" min="0" step="0.01" value={directPurchasePrice} onChange={e => setDirectPurchasePrice(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Price" aria-label="Price" />
+          <button className="direct-add-btn" onClick={() => void addPurchaseDirect()} disabled={!directPurchaseName.trim()} aria-label="Add purchase"><Plus size={17} /></button>
+        </div>
         <div className="task-list">
           {purchases.length > 0 && purchases.map(item => (
             <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
@@ -943,18 +931,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         </div>
       )}
 
-      {voiceReview && (
-        <div className="modal-backdrop">
-          <div className="modal card">
-            <div className="modal-header"><div><strong>I heard</strong><div className="modal-subtitle">{voiceTranscript}</div></div><button className="icon-btn" onClick={() => setVoiceReview(null)}><X /></button></div>
-            {voiceReview.intent === 'task' && <div className="review-block"><div className="review-label">Task</div><strong>{voiceReview.title || voiceReview.original}</strong>{voiceReview.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(voiceReview.dueDate, voiceReview.dueTime)}</div>}</div>}
-            {voiceReview.intent === 'shopping' && <div className="review-block"><div className="review-label">Shopping</div>{(voiceReview.shoppingItems ?? [voiceReview.shopping]).filter(Boolean).map((item, idx) => <div className="review-row" key={idx}><span>{item?.itemName}</span>{item?.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item?.price != null && <span>{money(item.price)}</span>}</div>)}</div>}
-            {voiceReview.intent === 'purchase' && <div className="review-block"><div className="review-label">Purchase</div>{(voiceReview.purchases ?? []).map((item, idx) => <div className="review-row" key={idx}><span>{item.itemName}</span>{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null && <span>{money(item.price)}</span>}</div>)}<div className="review-total">Total recognized: {money((voiceReview.purchases ?? []).reduce((sum, item) => sum + (item.price ?? 0), 0))}</div></div>}
-            <div className="modal-actions"><button className="secondary" onClick={() => { setInput(voiceTranscript); setVoiceReview(null) }}>Edit text</button><button className="primary" onClick={() => void saveVoiceReview()}>Save</button></div>
-          </div>
-        </div>
-      )}
-
       {duePrompt && (
         <div className="modal-backdrop">
           <div className="modal card">
@@ -964,17 +940,37 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                 <div className="choice-grid">
                   <button className="choice-card" onClick={() => selectQuickDue('today')}>Today</button>
                   <button className="choice-card" onClick={() => selectQuickDue('tomorrow')}>Tomorrow</button>
-                  <button className="choice-card wide" onClick={() => { setDueDate(dueDate || localISODate(new Date())); setDueTime(''); setDueStage('details'); window.setTimeout(() => dueTimeRef.current?.focus(), 80) }}>Choose date</button>
+                  <button className="choice-card wide" onClick={() => openDueDetails(dueDate || localISODate(new Date()), '')}>Choose date</button>
                   <button className="choice-card wide" onClick={() => void saveDueChoice('none')}>No due date</button>
                 </div>
               </>
             ) : (
               <div className="custom-due card-inner">
-                <div className="due-selected"><span>Due date</span><strong>{dueDate}</strong></div>
-                <label className="optional-time-label">Time <span>optional — leave blank for date only</span></label>
-                <input ref={dueTimeRef} aria-label="Optional time" type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} />
-                <div className="modal-actions"><button className="secondary" onClick={() => { setDueTime(''); void saveDueChoice('custom') }}>No specific time</button><button className="primary" onClick={() => void saveDueChoice('custom')}><CalendarPlus size={17} /> Save</button></div>
-                <button className="text-btn" onClick={() => setDueStage('choice')}>Change date</button>
+                <label className="due-row" htmlFor="due-date-input">
+                  <span className="due-row-icon"><CalendarPlus size={17} /></span>
+                  <span className="due-row-text"><span className="due-row-label">Due date</span><strong>{dueDate}</strong></span>
+                  <input id="due-date-input" className="due-date-overlay" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} aria-label="Due date" />
+                </label>
+                <div className="due-row">
+                  <span className="due-row-icon"><Clock3 size={17} /></span>
+                  <span className="due-row-text">
+                    <span className="due-row-label">Time <em>optional</em></span>
+                    {dueTime
+                      ? <strong>{dueTime}</strong>
+                      : <button type="button" className="due-row-placeholder" onClick={() => window.setTimeout(() => dueTimeRef.current?.focus(), 80)}>Add time</button>}
+                  </span>
+                  <input ref={dueTimeRef} className="due-time-overlay" type="time" value={dueTime} aria-label="Optional time" onChange={e => { setDueTime(e.target.value); setDueReminderOption(defaultReminderOption(e.target.value)) }} />
+                  {dueTime && <button type="button" className="due-row-clear" aria-label="Clear time" onClick={() => { setDueTime(''); setDueReminderOption(defaultReminderOption('')) }}><X size={15} /></button>}
+                </div>
+                <div className="reminder-block">
+                  <span className="due-row-label">Remind me</span>
+                  <div className="reminder-chips">
+                    {REMINDER_OPTIONS.map(option => (
+                      <button key={option.id} type="button" className={dueReminderOption === option.id ? 'reminder-chip active' : 'reminder-chip'} aria-pressed={dueReminderOption === option.id} onClick={() => setDueReminderOption(option.id)}>{option.label}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="modal-actions"><button className="primary full" onClick={() => void saveDueChoice('custom')}><CalendarPlus size={17} /> Save</button></div>
               </div>
             )}
           </div>

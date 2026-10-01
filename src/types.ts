@@ -5,7 +5,8 @@ export type Task = {
   dueDate?: string | null
   dueTime?: string | null
   reminderEnabled?: boolean
-  reminderMinutesBefore?: number
+  /** Lead time in minutes. null means the user chose "No reminder". */
+  reminderMinutesBefore?: number | null
   reminderAt?: string | null
   reminderSentAt?: string | null
   createdAt: string
@@ -42,11 +43,11 @@ export type Purchase = {
   deletedAt?: string | null
 }
 
-export type ThemeId = 'cat' | 'dog' | 'capybara'
+export type ThemeId = 'cat' | 'dog' | 'capybara' | 'strawberry'
 
 // Pastel palette applied on top of an animal theme. 'original' reproduces that
 // animal's current look exactly, so the feature is purely additive.
-export type ThemeColorId = 'original' | 'charcoal' | 'maroon' | 'pink' | 'yellow' | 'blue'
+export type ThemeColorId = 'original' | 'charcoal' | 'maroon' | 'pink' | 'yellow' | 'purple'
 
 export type Profile = {
   id: string
