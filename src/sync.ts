@@ -2,9 +2,12 @@ import { db } from './db'
 import { supabase } from './supabase'
 import { requestCaptchaToken, getCaptchaError, clearCaptchaError } from './components/TurnstileWidget'
 import { decideMerge, isPurgeableTombstone, shouldPushOrphan, visible, type Tombstoned } from './tombstones'
+import { MAX_RETRIES, classifyOutboxError, nextRetryState, shouldSkipItem, suppressesRemoteCopy } from './outbox'
+import type { OutboxItem } from './db'
 import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
 
 export { visible } from './tombstones'
+export { MAX_RETRIES } from './outbox'
 
 let pendingSignInPromise: Promise<string | null> | null = null
 let onlineHandlerInstalled = false
@@ -93,51 +96,121 @@ export async function getRemoteProfile() {
   return data
 }
 
-async function flushOutbox(userId: string) {
-  if (!supabase) return
-  const pending = await db.outbox.orderBy('id').toArray()
-  const deletedAt = new Date().toISOString()
-  for (const item of pending) {
-    try {
-      // Deletes are soft: we stamp deleted_at instead of removing the row, so
-      // other devices learn about the delete and purge their own copy. A hard
-      // delete would be indistinguishable from "never existed" and would let
-      // any offline copy resurrect the record. The set_updated_at trigger
-      // refreshes updated_at for us.
-      if (item.entity === 'task') {
-        if (item.operation === 'upsert' && item.payload) {
-          const { error } = await supabase.from('tasks').upsert(toDbTask(item.payload as Task, userId), { onConflict: 'id' })
-          if (error) throw error
-        } else if (item.operation === 'delete') {
-          const { error } = await supabase.from('tasks').update({ deleted_at: deletedAt }).eq('id', item.recordId).eq('user_id', userId)
-          if (error) throw error
-        }
-      } else if (item.entity === 'shopping') {
-        if (item.operation === 'upsert' && item.payload) {
-          const { error } = await supabase.from('shopping_items').upsert(toDbShopping(item.payload as ShoppingItem, userId), { onConflict: 'id' })
-          if (error) throw error
-        } else if (item.operation === 'delete') {
-          const { error } = await supabase.from('shopping_items').update({ deleted_at: deletedAt }).eq('id', item.recordId).eq('user_id', userId)
-          if (error) throw error
-        }
-      } else {
-        if (item.operation === 'upsert' && item.payload) {
-          const { error } = await supabase.from('purchases').upsert(toDbPurchase(item.payload as Purchase, userId), { onConflict: 'id' })
-          if (error) throw error
-        } else if (item.operation === 'delete') {
-          const { error } = await supabase.from('purchases').update({ deleted_at: deletedAt }).eq('id', item.recordId).eq('user_id', userId)
-          if (error) throw error
-        }
-      }
-      if (item.id !== undefined) await db.outbox.delete(item.id)
-    } catch {
-      break
+/** Performs one queued write against Supabase. Throws on a rejected or failed request. */
+async function applyOutboxItem(item: OutboxItem, userId: string) {
+  // Deletes are soft: we stamp deleted_at instead of removing the row, so other
+  // devices learn about the delete and purge their own copy. A hard delete
+  // would be indistinguishable from "never existed" and would let any offline
+  // copy resurrect the record. The set_updated_at trigger refreshes updated_at.
+  if (item.entity === 'task') {
+    if (item.operation === 'upsert' && item.payload) {
+      const { error } = await supabase!.from('tasks').upsert(toDbTask(item.payload as Task, userId), { onConflict: 'id' })
+      if (error) throw error
+    } else if (item.operation === 'delete') {
+      const { error } = await supabase!.from('tasks').update({ deleted_at: new Date().toISOString() }).eq('id', item.recordId).eq('user_id', userId)
+      if (error) throw error
+    }
+  } else if (item.entity === 'shopping') {
+    if (item.operation === 'upsert' && item.payload) {
+      const { error } = await supabase!.from('shopping_items').upsert(toDbShopping(item.payload as ShoppingItem, userId), { onConflict: 'id' })
+      if (error) throw error
+    } else if (item.operation === 'delete') {
+      const { error } = await supabase!.from('shopping_items').update({ deleted_at: new Date().toISOString() }).eq('id', item.recordId).eq('user_id', userId)
+      if (error) throw error
+    }
+  } else {
+    if (item.operation === 'upsert' && item.payload) {
+      const { error } = await supabase!.from('purchases').upsert(toDbPurchase(item.payload as Purchase, userId), { onConflict: 'id' })
+      if (error) throw error
+    } else if (item.operation === 'delete') {
+      const { error } = await supabase!.from('purchases').update({ deleted_at: new Date().toISOString() }).eq('id', item.recordId).eq('user_id', userId)
+      if (error) throw error
     }
   }
 }
 
+/**
+ * Drains the outbox in insertion order.
+ *
+ * A failed item no longer aborts the queue: it is charged (only for genuine
+ * server rejections) and passed over, so one bad record cannot block a delete
+ * tombstone queued behind it. Previously a single failure hit `break` and
+ * silently stalled every later item.
+ */
+async function flushOutbox(userId: string) {
+  if (!supabase) return
+  // Offline is not a record-level failure, so nothing is charged and the queue
+  // is left untouched for the next online pass.
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine
+
+  const pending = await db.outbox.orderBy('id').toArray()
+  for (const item of pending) {
+    // Already flagged: stop attempting it, but keep it queued so the user can
+    // retry or discard it explicitly. Nothing is lost.
+    if (shouldSkipItem(item)) continue
+    try {
+      await applyOutboxItem(item, userId)
+      if (item.id !== undefined) await db.outbox.delete(item.id)
+    } catch (error) {
+      const failure = classifyOutboxError(error, online)
+      const next = nextRetryState(item, failure)
+      if (next && item.id !== undefined) {
+        await db.outbox.update(item.id, {
+          retryCount: next.retryCount,
+          flagged: next.flagged,
+          lastError: error instanceof Error ? error.message : String(error),
+        })
+      }
+      // Transient and offline failures leave retryCount untouched; the next
+      // flush retries them for free.
+    }
+  }
+}
+
+/** Queued writes the server has refused MAX_RETRIES times, for the UI to show. */
+export async function getFlaggedOutboxItems(): Promise<OutboxItem[]> {
+  const all = await db.outbox.toArray()
+  return all.filter(item => item.flagged === true).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+}
+
+export async function getFlaggedOutboxCount() {
+  return (await getFlaggedOutboxItems()).length
+}
+
+/** Clears the flag and counter for one item, then re-attempts it immediately. */
+export async function retryOutboxItem(id: number) {
+  const item = await db.outbox.get(id)
+  if (!item) return
+  await db.outbox.update(id, { retryCount: 0, flagged: false, lastError: undefined })
+  const userId = await getUserId()
+  if (!userId || !supabase) return
+  try {
+    await applyOutboxItem({ ...item, retryCount: 0, flagged: false }, userId)
+    await db.outbox.delete(id)
+  } catch (error) {
+    const online = typeof navigator === 'undefined' ? true : navigator.onLine
+    const next = nextRetryState({ retryCount: 0 }, classifyOutboxError(error, online))
+    if (next) {
+      await db.outbox.update(id, {
+        retryCount: next.retryCount,
+        flagged: next.flagged,
+        lastError: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+}
+
+/** Drops one flagged item. Only ever called on explicit user action. */
+export async function discardOutboxItem(id: number) {
+  await db.outbox.delete(id)
+}
+
 async function pendingDeletes(entity: 'task' | 'shopping' | 'purchase') {
-  return new Set<string>((await db.outbox.where('entity').equals(entity).and(item => item.operation === 'delete').toArray()).map(item => item.recordId))
+  const rows = await db.outbox.where('entity').equals(entity).and(item => item.operation === 'delete').toArray()
+  // Flagged deletes are excluded: an item that can never succeed would otherwise
+  // suppress the remote copy forever, freezing that record in limbo.
+  return new Set(rows.filter(suppressesRemoteCopy).map(item => item.recordId))
 }
 
 async function mergeTasks(remote: Task[], local: Task[], deleted: Set<string>) {
