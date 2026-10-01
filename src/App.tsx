@@ -2,14 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Pencil, Plus, Settings, ShoppingCart, Sparkles, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
 import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeColor, setLocalThemeCustomizations } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
-import { parseInput, type ParsedInput, type ParsedLine } from './parser'
-import { parseInputWithAI } from './intentAI'
+import { type ParsedInput, type ParsedLine } from './parser'
 import { supabase } from './supabase'
 import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError, purgeLocalTombstones, visible, getFlaggedOutboxItems, retryOutboxItem, discardOutboxItem, MAX_RETRIES } from './sync'
 import type { OutboxItem } from './db'
 import { TurnstileWidget } from './components/TurnstileWidget'
 import { calculateReminderAt, resolveReminder, defaultReminderOption, REMINDER_OPTIONS, type ReminderOptionId } from './reminders'
-import { enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
+import { disablePushNotifications, enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
 import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
@@ -105,8 +104,8 @@ function shortUnit(unit?: string | null) {
 
   function taskWithReminder(title: string, dueDate: string | null, dueTime: string | null, reminderOption?: ReminderOptionId): Task {
     const now = new Date().toISOString()
-    // Omitting the option preserves the original 24h lead, so the parser and
-    // Quick Add paths keep behaving exactly as before.
+    // Omitting the option preserves the original 24h lead, which is what the
+    // task edit form and other write paths rely on.
     const reminder = reminderOption
       ? resolveReminder(dueDate, dueTime, reminderOption)
       : { enabled: Boolean(dueDate), minutesBefore: 1440, reminderAt: calculateReminderAt(dueDate, dueTime, 1440) }
@@ -171,7 +170,7 @@ export default function App() {
   const [editPurchasePrice, setEditPurchasePrice] = useState('')
 
   // Direct entry fields. These bypass the parser entirely and always target one
-  // entity, unlike Quick Add which infers intent from natural language.
+  // entity, each category having its own manual form.
   const [directTaskTitle, setDirectTaskTitle] = useState('')
   const [directShopName, setDirectShopName] = useState('')
   const [directShopQty, setDirectShopQty] = useState('')
@@ -180,6 +179,8 @@ export default function App() {
   const [directPurchaseQty, setDirectPurchaseQty] = useState('')
   const [directPurchaseUnit, setDirectPurchaseUnit] = useState('')
   const [directPurchasePrice, setDirectPurchasePrice] = useState('')
+  // Only one category form is open at a time; null keeps all three collapsed.
+  const [expandedAdd, setExpandedAdd] = useState<'task' | 'shopping' | 'purchase' | null>(null)
 
   // null until the capability probe resolves, so the Speak button is not
   // disabled during the check itself.
@@ -187,6 +188,11 @@ export default function App() {
   const ambiguitySaveLockRef = useRef(false)
 
 const [remindersEnabled, setRemindersEnabled] = useState(false)
+   const [remindersBusy, setRemindersBusy] = useState(false)
+   const [remindersMessage, setRemindersMessage] = useState('')
+   const [remindersMessageIsError, setRemindersMessageIsError] = useState(false)
+   const remindersToggleRef = useRef<HTMLDivElement | null>(null)
+   const focusRemindersRef = useRef(false)
    const signInError = getSignInError()
 
    useEffect(() => {
@@ -266,6 +272,15 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       cancelled = true
     }
   }, [])
+
+  // Runs after the settings modal is mounted so the control exists before it is
+  // scrolled to. The flag is cleared first so a later manual open does not
+  // re-scroll.
+  useEffect(() => {
+    if (!settingsOpen || !focusRemindersRef.current) return
+    focusRemindersRef.current = false
+    remindersToggleRef.current?.scrollIntoView({ block: 'center' })
+  }, [settingsOpen])
 
   useEffect(() => {
     const handleOnline = async () => {
@@ -407,26 +422,71 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     }
   }
 
-  function openSettings() {
+  function openSettings(focusReminders = false) {
     setSettingsName(name)
     setDraftTheme(theme)
     setDraftThemeColor(themeColor)
     setDraftCustomizations(normalizeThemeCustomizations(themeCustomizations))
     setColorPickerStep('animal')
+    focusRemindersRef.current = focusReminders
     setSettingsOpen(true)
   }
 
-  async function ensureReminders() {
-    if (!pushSupported() || !supabase) return false
+  // The bell reports state; it no longer changes delivery on its own. It opens
+  // Settings with the Phone reminders control in view instead.
+  function openRemindersSettings() {
+    openSettings(true)
+  }
+
+  // Turns the notification module's internal errors into something readable.
+  // Kept out of notifications.ts so that module stays free of UI strings.
+  function userFacingNotificationError(error: unknown) {
+    const message = error instanceof Error ? error.message : ''
+    if (!pushSupported()) return "Phone notifications aren't supported on this device."
+    if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+      return 'Notifications are blocked. Enable them in your browser/device settings.'
+    }
+    if (/not configured/i.test(message)) return 'Phone reminders are not set up on this build yet.'
+    if (/No signed-in/i.test(message)) return 'Sign in to Tandaan before turning on phone reminders.'
+    if (/incomplete push subscription/i.test(message)) return 'This browser returned an incomplete push subscription.'
+    if (/refused to remove/i.test(message)) return 'The browser refused to remove the push subscription.'
+    return message || 'Could not update phone reminders.'
+  }
+
+  // Settings is the only place that changes delivery. Scheduling a task
+  // reminder and allowing this phone to receive push are independent: nothing
+  // here subscribes the phone, and no task save subscribes it either.
+  async function toggleReminders() {
+    if (remindersBusy) return
+    setRemindersMessage('')
+
+    if (remindersEnabled) {
+      setRemindersBusy(true)
+      try {
+        await disablePushNotifications()
+        setRemindersEnabled(false)
+        setRemindersMessageIsError(false)
+        setRemindersMessage('Phone reminders are off. Your scheduled task reminders are unchanged.')
+      } catch (error) {
+        setRemindersMessageIsError(true)
+        setRemindersMessage(userFacingNotificationError(error))
+      } finally {
+        setRemindersBusy(false)
+      }
+      return
+    }
+
+    setRemindersBusy(true)
     try {
       await enablePushNotifications()
       setRemindersEnabled(true)
-      setStatus('Phone reminders enabled')
-      return true
+      setRemindersMessageIsError(false)
+      setRemindersMessage('Phone reminders are on.')
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not enable phone reminders.'
-      if (!message.includes('not configured yet')) setStatus(`Task saved · ${message}`)
-      return false
+      setRemindersMessageIsError(true)
+      setRemindersMessage(userFacingNotificationError(error))
+    } finally {
+      setRemindersBusy(false)
     }
   }
 
@@ -458,12 +518,14 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
 
   // Direct entry: no parsing, no intent guessing. Each handler targets exactly
   // one entity and reuses the existing persist helpers so the outbox, sync and
-  // local-first ordering stay identical to every other write path.
+  // local-first ordering stay identical to every other write path. Each one
+  // closes its own form afterwards, leaving the row itself untouched.
   async function addTaskDirect() {
     const title = directTaskTitle.trim()
     if (!title) return
     await persistTask(taskWithReminder(title, null, null), 'Task added')
     setDirectTaskTitle('')
+    setExpandedAdd(null)
   }
 
   async function addShoppingDirect() {
@@ -475,6 +537,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     setDirectShopName('')
     setDirectShopQty('')
     setDirectShopUnit('')
+    setExpandedAdd(null)
   }
 
   async function addPurchaseDirect() {
@@ -487,6 +550,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     setDirectPurchaseQty('')
     setDirectPurchaseUnit('')
     setDirectPurchasePrice('')
+    setExpandedAdd(null)
   }
 
   async function saveParsed(parsed: ParsedInput, forcedIntent?: 'task' | 'shopping' | 'purchase') {
@@ -499,7 +563,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     if (resolvedIntent === 'task') {
       const title = parsed.title || parsed.original
       if (parsed.dueDate) {
-        void ensureReminders()
         const task = taskWithReminder(title, parsed.dueDate, parsed.dueTime ?? null)
         await persistTask(task, 'Task saved')
       } else {
@@ -537,26 +600,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     return true
   }
 
-  async function addFromText() {
-    const raw = input.trim()
-    if (!raw) return
-
-    // Normal entries must never wait for the AI model. The deterministic
-    // parser handles clear tasks, shopping items, purchases and structured
-    // details immediately. Only an actually ambiguous result uses AI.
-    const fastParsed = parseInput(raw)
-    setInput('')
-
-    if (!fastParsed.ambiguous) {
-      await saveParsed(fastParsed)
-      return
-    }
-
-    setStatus('Checking…')
-    const aiParsed = await parseInputWithAI(raw)
-    await saveParsed(aiParsed)
-  }
-
   // Opening the picker is the only place the reminder default needs seeding;
   // the time row re-seeds it when the user adds or clears a time.
   function openDueDetails(date: string, time: string) {
@@ -586,7 +629,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     const nextDate = dueDate || null
     const nextTime = nextDate && dueTime ? dueTime : null
     if (!nextDate) return
-    void ensureReminders()
     const task = taskWithReminder(duePrompt.title, nextDate, nextTime, dueReminderOption)
     await persistTask(task, 'Task saved')
     setDuePrompt(null)
@@ -625,7 +667,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       reminderSentAt: dateChanged ? null : (editingTask.reminderSentAt ?? null),
       updatedAt: new Date().toISOString()
     }
-      if (nextDate) void ensureReminders()
       await persistTask(updated, 'Task updated')
       setEditingTask(null)
     } catch (error) {
@@ -782,8 +823,8 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={20} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
         <div className="header-actions">
           {flaggedItems.length > 0 && <button className="sync-warning" onClick={() => setFlaggedOpen(true)} title="Some changes could not be synced">{flaggedItems.length} failed to sync</button>}
-          <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={() => void ensureReminders()} aria-label={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'} title={remindersEnabled ? 'Phone reminders enabled' : 'Enable phone reminders'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
-          <button className="icon-btn" onClick={openSettings} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
+          <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={openRemindersSettings} aria-label={remindersEnabled ? 'Phone reminders enabled. Open settings' : 'Phone reminders off. Open settings'} title={remindersEnabled ? 'Phone reminders enabled' : 'Phone reminders off'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
+          <button className="icon-btn" onClick={() => openSettings()} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
         </div>
       </header>
 
@@ -797,20 +838,18 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         </div>
       </section>
 
-      <section className="quick-add card">
-        <div className="section-title"><div><strong>Quick Add</strong><span>Type naturally. Tandaan decides: task, shopping, or purchase.</span></div><div className="beta-pill">smart add</div></div>
-        <div className="input-row">
-          <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addFromText() }} placeholder="Try: Pay electricity tomorrow at 6 PM" />
-          <button className="primary add-btn" onClick={() => void addFromText()}><Plus size={18} /> Add</button>
-        </div>
-        {signInError && <div className="inline-error">{signInError.message}</div>}
-      </section>
-
       <section className="section-block">
         <div className="section-heading"><h2>Today</h2><span>{tasks.length} total</span></div>
         <div className="direct-add">
-          <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Add a task" aria-label="Add a task directly" />
-          <button className="direct-add-btn" onClick={() => void addTaskDirect()} disabled={!directTaskTitle.trim()} aria-label="Add task"><Plus size={17} /></button>
+          <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'task' ? null : 'task')} aria-expanded={expandedAdd === 'task'} aria-label="Add a task">
+            <span>Add a task</span><Plus size={17} />
+          </button>
+          {expandedAdd === 'task' && (
+            <div className="direct-add-fields">
+              <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Task title" aria-label="Task title" autoFocus />
+              <button className="direct-add-btn" onClick={() => void addTaskDirect()} disabled={!directTaskTitle.trim()} aria-label="Save task"><Check size={17} /></button>
+            </div>
+          )}
         </div>
         <div className="task-list">
           {tasks.length === 0 && <div className="empty card">No tasks yet. Add one above.</div>}
@@ -835,10 +874,17 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       <section className="section-block">
         <div className="section-heading"><h2>Shopping</h2><span>{liveShopping.filter(i => !i.isPurchased).length} remaining</span></div>
         <div className="direct-add">
-          <input className="grow" value={directShopName} onChange={e => setDirectShopName(e.target.value)} placeholder="Add an item" aria-label="Add a shopping item directly" />
-          <input className="num" type="number" min="0" step="any" value={directShopQty} onChange={e => setDirectShopQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
-          <input className="unit" value={directShopUnit} onChange={e => setDirectShopUnit(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Unit" aria-label="Unit" />
-          <button className="direct-add-btn" onClick={() => void addShoppingDirect()} disabled={!directShopName.trim()} aria-label="Add shopping item"><Plus size={17} /></button>
+          <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'shopping' ? null : 'shopping')} aria-expanded={expandedAdd === 'shopping'} aria-label="Add a shopping item">
+            <span>Add an item</span><Plus size={17} />
+          </button>
+          {expandedAdd === 'shopping' && (
+            <div className="direct-add-fields">
+              <input className="grow" value={directShopName} onChange={e => setDirectShopName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Item" aria-label="Shopping item" autoFocus />
+              <input className="num" type="number" min="0" step="any" value={directShopQty} onChange={e => setDirectShopQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
+              <input className="unit" value={directShopUnit} onChange={e => setDirectShopUnit(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Unit" aria-label="Unit" />
+              <button className="direct-add-btn" onClick={() => void addShoppingDirect()} disabled={!directShopName.trim()} aria-label="Save shopping item"><Check size={17} /></button>
+            </div>
+          )}
         </div>
         <div className="task-list">
           {shopping.length === 0 && <div className="empty card">No shopping items yet.</div>}
@@ -861,11 +907,18 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
         <div className="purchase-total card"><div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small></div>
         <div className="direct-add">
-          <input className="grow" value={directPurchaseName} onChange={e => setDirectPurchaseName(e.target.value)} placeholder="Add a purchase" aria-label="Add a purchase directly" />
-          <input className="num" type="number" min="0" step="any" value={directPurchaseQty} onChange={e => setDirectPurchaseQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
-          <input className="unit" value={directPurchaseUnit} onChange={e => setDirectPurchaseUnit(e.target.value)} placeholder="Unit" aria-label="Unit" />
-          <input className="num price" type="number" min="0" step="0.01" value={directPurchasePrice} onChange={e => setDirectPurchasePrice(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Price" aria-label="Price" />
-          <button className="direct-add-btn" onClick={() => void addPurchaseDirect()} disabled={!directPurchaseName.trim()} aria-label="Add purchase"><Plus size={17} /></button>
+          <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'purchase' ? null : 'purchase')} aria-expanded={expandedAdd === 'purchase'} aria-label="Add a purchase">
+            <span>Add a purchase</span><Plus size={17} />
+          </button>
+          {expandedAdd === 'purchase' && (
+            <div className="direct-add-fields">
+              <input className="grow" value={directPurchaseName} onChange={e => setDirectPurchaseName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Item" aria-label="Purchase item" autoFocus />
+              <input className="num" type="number" min="0" step="any" value={directPurchaseQty} onChange={e => setDirectPurchaseQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
+              <input className="unit" value={directPurchaseUnit} onChange={e => setDirectPurchaseUnit(e.target.value)} placeholder="Unit" aria-label="Unit" />
+              <input className="num price" type="number" min="0" step="0.01" value={directPurchasePrice} onChange={e => setDirectPurchasePrice(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Price" aria-label="Price" />
+              <button className="direct-add-btn" onClick={() => void addPurchaseDirect()} disabled={!directPurchaseName.trim()} aria-label="Save purchase"><Check size={17} /></button>
+            </div>
+          )}
         </div>
         <div className="task-list">
           {purchases.length > 0 && purchases.map(item => (
@@ -1073,7 +1126,27 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
             <section className="settings-section">
               <div className="settings-section-title"><SlidersHorizontal size={17} /><div><strong>App behavior</strong><span>Local-first now, cloud sync when online.</span></div></div>
               <div className="settings-status-row"><span><WifiOff size={16} /> Offline-first data</span><strong>Ready</strong></div>
-              <div className="settings-status-row"><span><Bell size={16} /> Phone reminders</span><strong>{remindersEnabled ? 'Enabled' : 'Off'}</strong></div>
+              <div className="reminders-setting" ref={remindersToggleRef}>
+                <div className="reminders-setting-copy">
+                  <span className="reminders-setting-label"><Bell size={16} /> Phone reminders</span>
+                  <span className="reminders-setting-hint">Get notified for scheduled task reminders</span>
+                </div>
+                <button
+                  type="button"
+                  className={`switch${remindersEnabled ? ' on' : ''}`}
+                  role="switch"
+                  aria-checked={remindersEnabled}
+                  aria-label="Phone reminders"
+                  disabled={remindersBusy}
+                  onClick={() => void toggleReminders()}
+                >
+                  <span className="switch-knob" />
+                  <span className="switch-state">{remindersBusy ? '…' : remindersEnabled ? 'On' : 'Off'}</span>
+                </button>
+              </div>
+              {remindersMessage && (
+                <div className={remindersMessageIsError ? 'inline-error' : 'reminders-message-ok'}>{remindersMessage}</div>
+              )}
             </section>
 
             <div className="modal-actions"><button className="secondary" onClick={() => setSettingsOpen(false)}>Cancel</button><button className="primary" onClick={() => void saveSettings()}><Check size={17} /> Save settings</button></div>
