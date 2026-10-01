@@ -54,3 +54,38 @@ export async function enablePushNotifications() {
   if (error) throw error
   return subscription
 }
+
+export async function disablePushNotifications() {
+  if (!pushSupported()) throw new Error('Phone notifications are not supported in this browser/PWA.')
+
+  // The browser subscription can outlive a revoked permission, so always ask
+  // the push manager rather than trusting Notification.permission.
+  const subscription = await getPushSubscription()
+  if (subscription && !(await subscription.unsubscribe())) {
+    throw new Error('The browser refused to remove the push subscription.')
+  }
+
+  // The reminder cron reads push_subscriptions, so the stored row has to go as
+  // well or it keeps targeting an endpoint this device no longer accepts. Only
+  // this device's endpoint is removed, leaving any second device subscribed.
+  // Cleanup is best effort: with no Supabase client there is nothing to notify
+  // anyway, and blocking the user here would leave reminders visibly on.
+  //
+  // The delete is conditional on a current endpoint on purpose. Without one
+  // there is nothing of this device's to remove, and it must never widen to
+  // user_id alone, which would strip every other device on the same account.
+  const endpoint = subscription?.toJSON().endpoint
+  if (supabase && endpoint) {
+    const userId = await getUserId()
+    if (userId) {
+      const { error } = await supabase
+        .from('push_subscriptions')
+        .delete()
+        .eq('user_id', userId)
+        .eq('endpoint', endpoint)
+
+      if (error) throw error
+    }
+  }
+  return true
+}

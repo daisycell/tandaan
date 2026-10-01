@@ -31,7 +31,9 @@
 
 * { box-sizing: border-box; }
 html { background: var(--bg); }
-body { margin: 0; min-width: 320px; background-image: linear-gradient(rgba(5,3,10,.78), rgba(5,3,10,.92)), var(--theme-wallpaper), radial-gradient(circle at top, color-mix(in srgb, var(--accent) 18%, transparent) 0%, var(--bg) 52%); background-size: cover, cover, auto; background-position: center, center, top; background-attachment: fixed; color: var(--text); }
+/* The page background is drawn by the body::before layer further down this
+   file, so body itself carries no background of its own. */
+body { margin: 0; min-width: 320px; color: var(--text); }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
@@ -73,19 +75,23 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .reminder-chip { padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); font-size:13px; font-weight:700; cursor:pointer; }
 .reminder-chip.active { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 16%, var(--surface-2)); color:var(--text); }
 
-/* Direct entry: always adds to one entity, no intent parsing. Deliberately
-   quiet so it reads as part of each section rather than a second form. Flat
-   surface, hairline border and a small square-ish accent button, sized to the
-   list cards below it. The name field takes the slack; qty/unit/price hold
-   fixed widths so the row never pushes the button off-screen. */
-.direct-add { display: flex; gap: 6px; margin: 0 0 10px; align-items: stretch; }
-.direct-add input { padding: 9px 11px; border-radius: 12px; min-height: 40px; background: var(--surface-2); font-size: 14px; min-width: 0; }
-.direct-add input::placeholder { color: var(--muted-2); }
-.direct-add input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
-.direct-add input.grow { flex: 1 1 auto; min-width: 0; }
-.direct-add input.num { flex: 0 0 58px; width: 58px; text-align: center; }
-.direct-add input.num.price { flex: 0 0 72px; width: 72px; }
-.direct-add input.unit { flex: 0 0 68px; width: 68px; }
+/* Direct entry: always adds to one entity, no intent parsing. Each category
+   starts as a single quiet row; tapping + expands that category's fields in
+   place, so nothing is permanently visible and no category competes with the
+   lists below it. */
+.direct-add { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; }
+.direct-add-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 40px; padding: 9px 13px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.direct-add-row:hover { border-color: var(--accent-border); color: var(--text); }
+.direct-add-row[aria-expanded="true"] { border-color: var(--accent-border); color: var(--text); }
+.direct-add-row svg { flex: 0 0 auto; color: var(--accent); }
+.direct-add-fields { display: flex; gap: 6px; align-items: stretch; }
+.direct-add-fields input { padding: 9px 11px; border-radius: 12px; min-height: 40px; background: var(--surface-2); font-size: 14px; min-width: 0; }
+.direct-add-fields input::placeholder { color: var(--muted-2); }
+.direct-add-fields input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.direct-add-fields input.grow { flex: 1 1 auto; min-width: 0; }
+.direct-add-fields input.num { flex: 0 0 58px; width: 58px; text-align: center; }
+.direct-add-fields input.num.price { flex: 0 0 72px; width: 72px; }
+.direct-add-fields input.unit { flex: 0 0 68px; width: 68px; }
 .direct-add-btn { flex: 0 0 auto; display: grid; place-items: center; width: 40px; min-height: 40px; padding: 0; border-radius: 12px; border: 1px solid var(--accent-border); background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); color: var(--accent); cursor: pointer; }
 .direct-add-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 26%, var(--surface-2)); }
 .direct-add-btn:disabled { opacity: .4; cursor: not-allowed; }
@@ -226,6 +232,21 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .settings-status-row span { display:inline-flex; align-items:center; gap:7px; }
 .settings-status-row strong { color:var(--text); }
 
+/* Phone reminders: a real control rather than a read-only status line. The
+   switch keeps a visible On/Off word so the state never depends on colour
+   alone, and the 34px min-height keeps it comfortable to hit on a phone. */
+.reminders-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid rgba(255,255,255,.05); }
+.reminders-setting-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.reminders-setting-label { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+.reminders-setting-hint { color: var(--muted-2); font-size: 11px; }
+.switch { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 14px 5px 5px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-3); color: var(--muted); cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease; }
+.switch-knob { width: 28px; height: 28px; border-radius: 50%; background: var(--muted-2); transition: background .16s ease; }
+.switch-state { font-size: 12px; font-weight: 800; min-width: 22px; text-align: left; }
+.switch.on { border-color: var(--accent-border); background: var(--accent-soft); color: var(--text); }
+.switch.on .switch-knob { background: var(--accent); }
+.switch:disabled { opacity: .6; cursor: wait; }
+.reminders-message-ok { padding: 11px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--text); border: 1px solid var(--accent-border); }
+
 /* Full left swipe deletes automatically on release. */
 .swipe-shell { position:relative; overflow:hidden; border-radius:20px; }
 .swipe-delete-bg { position:absolute; inset:0; display:flex; align-items:center; justify-content:flex-end; padding-right:22px; background:linear-gradient(90deg, rgba(107,33,49,.45), var(--danger-bg)); color:#fff; }
@@ -273,7 +294,6 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .voice-meter span { width: 40px; }
 
 @media (max-width: 620px) {
-  body { background-attachment: scroll; }
   .app-shell { width: 100%; padding: 10px 10px max(44px, env(safe-area-inset-bottom)); }
   .app-header { padding-top: max(4px, env(safe-area-inset-top)); padding-bottom: 10px; }
   .brand-row { gap: 9px; min-width: 0; }
@@ -901,24 +921,37 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
    fields and the button share the second. Wrapping beats squeezing Qty/Unit/
    Price down to unreadable widths, and keeps the button at a 40px tap target. */
 @media (max-width:620px) {
-  .direct-add { flex-wrap: wrap; }
-  .direct-add input.grow { flex: 1 1 100%; }
-  .direct-add input.num { flex: 1 1 0; width: auto; }
-  .direct-add input.num.price { flex: 1.2 1 0; width: auto; }
-  .direct-add input.unit { flex: 1 1 0; width: auto; }
+  .direct-add-fields { flex-wrap: wrap; }
+  .direct-add-fields input.grow { flex: 1 1 100%; }
+  .direct-add-fields input.num { flex: 1 1 0; width: auto; }
+  .direct-add-fields input.num.price { flex: 1.2 1 0; width: auto; }
+  .direct-add-fields input.unit { flex: 1 1 0; width: auto; }
   .direct-add-btn { flex: 0 0 40px; }
 }
 
 /* The gesture itself remains unchanged; per-row swipe instructions are intentionally omitted. */
 .swipe-delete-hint { display:none; }
 
-/* Personal backgrounds: keep the photo visible without sacrificing text contrast. */
-body {
+/* Personal backgrounds: keep the photo visible without sacrificing text contrast.
+   The wallpaper, the accent wash and the readability overlay are painted on a
+   single fixed, viewport-sized layer behind all content rather than on body.
+   Body backgrounds are sized by the document, so on a long page `cover` either
+   leaves the lower part unpainted or scales the photo to an absurd height, and
+   `background-attachment: fixed` is unreliable on iOS Safari (it tracks the
+   layout viewport, so it jumps while scrolling and breaks on rotation). A fixed
+   pseudo-element covers the full scrollable height, keeps the framing steady,
+   and re-resolves on viewport resize and device rotation. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background-image:
     linear-gradient(rgba(5, 3, 10, .34), rgba(5, 3, 10, .56)),
     var(--theme-wallpaper),
     radial-gradient(circle at top, color-mix(in srgb, var(--accent) 18%, transparent) 0%, var(--bg) 52%);
-  background-size: cover, contain, auto;
+  background-size: cover, cover, auto;
   background-position: center, center top, top;
   background-repeat: no-repeat;
 }
@@ -940,12 +973,6 @@ body {
 }
 
 @media (max-width: 640px) {
-  body {
-    background-size: cover, contain, auto;
-    background-position: center, center top, top;
-    background-attachment: scroll;
-  }
-
   .purchase-total + .task-list {
     margin-top: 18px;
   }
