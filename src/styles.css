@@ -77,6 +77,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .due-compact { display: flex; flex-direction: column; gap: 10px; }
 .due-compact-label { font-size: 12px; color: var(--muted); }
 .due-choice-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.due-choice-row.single { grid-template-columns: 1fr; }
 .due-choice { min-height: 48px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; text-align: center; }
 .due-choice.active { border-color: var(--accent-border); background: var(--accent-soft); }
 .due-time-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -91,6 +92,15 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .reminder-chips { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
 .reminder-chip { padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); font-size:13px; font-weight:700; cursor:pointer; }
 .reminder-chip.active { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 16%, var(--surface-2)); color:var(--text); }
+/* Custom date picker and custom lead-time control. Both reuse the existing
+   surface/border tokens so they read as part of the same row, and both stay
+   full width so the OS picker is the thing the user actually taps. */
+.due-date-input { min-height:48px; padding:12px 14px; border-radius:14px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); font-size:14px; min-width:0; }
+.due-date-input:focus { border-color:var(--accent-border); outline:none; }
+.reminder-custom { display:grid; grid-template-columns:88px minmax(0,1fr); gap:8px; }
+.reminder-custom-amount { min-height:44px; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); font-size:14px; min-width:0; }
+.reminder-custom-unit { min-height:44px; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); font-size:14px; min-width:0; }
+.reminder-error { margin:0; font-size:12px; color:var(--danger); }
 
 /* Direct entry: always adds to one entity, no intent parsing. Each category
    starts as a single quiet row; tapping + expands that category's fields in

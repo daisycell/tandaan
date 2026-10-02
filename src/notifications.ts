@@ -33,8 +33,14 @@ export class PushStageError extends Error {
   }
 }
 
-/** Terse and free of identifiers: the endpoint and subscription keys must never reach the log. */
-function diagnose(stage: PushStage, outcome: 'ok' | 'failed', detail?: unknown) {
+/**
+ * Terse and free of identifiers: the endpoint and subscription keys must never reach the log.
+ *
+ * `outcome` is a free-form stage token so one line can carry both progress
+ * markers ('start', 'existing-session', 'get-user', 'session-verify') and the
+ * terminal ones ('ok', 'failed').
+ */
+function diagnose(stage: PushStage, outcome: string, detail?: unknown) {
   const reason = detail instanceof Error ? `${detail.name}: ${detail.message}` : detail === undefined ? '' : String(detail)
   console.warn(`[push] stage=${stage} ${outcome}${reason ? ` (${reason})` : ''}`)
 }
@@ -86,7 +92,7 @@ function authFailureMessage(error: unknown): string {
 async function existingSessionUserId(): Promise<string | null> {
   const sb = supabase
   if (!sb) return null
-  const { data } = await withTimeout('auth', sb.auth.getSession())
+  const { data } = await sb.auth.getSession()
   return data?.session?.user?.id ?? null
 }
 
@@ -102,8 +108,11 @@ async function resolveUserId(): Promise<string> {
   const sb = supabase
   if (!sb) throw new PushStageError('config', 'Supabase is not configured.')
 
+  diagnose('auth', 'start')
+
   try {
     const existing = await existingSessionUserId()
+    diagnose('auth', 'existing-session', existing ? 'found' : 'none')
     if (existing) {
       diagnose('auth', 'ok', 'existing session')
       return existing
@@ -116,9 +125,17 @@ async function resolveUserId(): Promise<string> {
   // One pass through the existing path in sync.ts, which performs anonymous
   // sign-in behind the CAPTCHA. It rethrows its own error, so that error is the
   // real reason and is carried through rather than replaced.
+  //
+  // Deliberately NOT wrapped in withTimeout(). This call owns the auth timeout
+  // itself: the CAPTCHA lifecycle timer inside requestCaptchaToken() already
+  // bounds it, and it starts LATER than a timer here would, so an equally long
+  // stage timer on the outside always preempted it and replaced the specific
+  // reason with a generic "Timed out after 15s waiting for auth". Two competing
+  // 15s timers on one stage is what made the failure unreadable.
   let userId: string | null = null
   try {
-    userId = await withTimeout('auth', getUserId())
+    diagnose('auth', 'get-user')
+    userId = await getUserId()
   } catch (error) {
     diagnose('auth', 'failed', error)
     throw new PushStageError('auth', authFailureMessage(error), { cause: error })
@@ -126,6 +143,7 @@ async function resolveUserId(): Promise<string> {
 
   // Verify rather than trust: confirm a session really exists now.
   try {
+    diagnose('auth', 'session-verify')
     const verified = await existingSessionUserId()
     if (verified) {
       diagnose('auth', 'ok', 'anonymous session')
