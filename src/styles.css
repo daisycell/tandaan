@@ -28,6 +28,7 @@
 :root[data-theme="cat"] { --accent:#8b5cf6; --accent-strong:#7c3aed; --accent-soft:rgba(139,92,246,.16); --accent-border:rgba(196,181,253,.34); --bg:#0b0715; --bg-secondary:#130d21; --surface:rgba(21,14,35,.92); --surface-2:#17102a; --surface-3:#21183b; --border:#31234b; --border-strong:#49356c; --header-bg:rgba(11,7,21,.96); --header-bg-fade:rgba(11,7,21,.8); }
 :root[data-theme="dog"] { --accent:#d89b2b; --accent-strong:#b97812; --accent-soft:rgba(216,155,43,.16); --accent-border:rgba(245,196,95,.34); --bg:#130e07; --bg-secondary:#1f160b; --surface:rgba(31,22,11,.92); --surface-2:#261b0f; --surface-3:#362613; --border:#4d391e; --border-strong:#73552a; --header-bg:rgba(11,7,21,.96); --header-bg-fade:rgba(11,7,21,.8); }
 :root[data-theme="capybara"] { --accent:#9a7b58; --accent-strong:#72563a; --accent-soft:rgba(154,123,88,.17); --accent-border:rgba(210,181,145,.34); --bg:#100d08; --bg-secondary:#1a1510; --surface:rgba(28,23,17,.93); --surface-2:#211a13; --surface-3:#302419; --border:#433426; --border-strong:#63503a; --header-bg:rgba(11,7,21,.96); --header-bg-fade:rgba(11,7,21,.8); }
+:root[data-theme="strawberry"] { --accent:#ef476f; --accent-strong:#d9365f; --accent-soft:rgba(239,71,111,.16); --accent-border:rgba(255,168,190,.34); --bg:#16080d; --bg-secondary:#220d14; --surface:rgba(34,13,20,.93); --surface-2:#2a1019; --surface-3:#3b1722; --border:#552333; --border-strong:#733044; --header-bg:rgba(22,8,13,.96); --header-bg-fade:rgba(22,8,13,.8); }
 
 * { box-sizing: border-box; }
 html { background: var(--bg); }
@@ -266,7 +267,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .switch.on { border-color: var(--accent-border); background: var(--accent-soft); color: var(--text); }
 .switch.on .switch-knob { background: var(--accent); }
 .switch:disabled { opacity: .6; cursor: wait; }
-.reminders-message-ok { padding: 11px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--text); border: 1px solid var(--accent-border); }
+.reminders-message-ok { padding: 11px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); }
 
 /* Full left swipe deletes automatically on release. */
 .swipe-shell { position:relative; overflow:hidden; border-radius:20px; }
@@ -763,6 +764,13 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   --header-bg:rgba(20,14,21,0.96); --header-bg-fade:rgba(17,12,21,0.8);
 }
 
+:root[data-theme="cat"][data-color="purple"] {
+  --accent:#8b5cf6; --accent-strong:#7c3aed; --accent-soft:rgba(139,92,246,.16); --accent-border:rgba(196,181,253,.34);
+  --bg:#170f28; --bg-secondary:#1d1331; --surface:rgba(31,20,51,.92); --surface-2:#201538; --surface-3:#281b44;
+  --border:#33234f; --border-strong:#46326a;
+  --header-bg:rgba(18,11,31,.96); --header-bg-fade:rgba(15,10,28,.8);
+}
+
 :root[data-theme="cat"][data-color="blue"] {
   --accent:#7aa5e0; --accent-strong:#5b87c9; --accent-soft:rgba(122,165,224,0.16); --accent-border:rgba(178,205,244,.34);
   --bg:#101226; --bg-secondary:#16172f; --surface:rgba(23,24,49,.92); --surface-2:#191936; --surface-3:#201f42;
@@ -796,6 +804,13 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   --bg:#211a0a; --bg-secondary:#2a200d; --surface:rgba(42,32,13,.92); --surface-2:#2f2410; --surface-3:#3b2c13;
   --border:#4c3a1c; --border-strong:#6b5026;
   --header-bg:rgba(27,20,9,0.96); --header-bg-fade:rgba(24,18,8,0.8);
+}
+
+:root[data-theme="dog"][data-color="purple"] {
+  --accent:#8b5cf6; --accent-strong:#7c3aed; --accent-soft:rgba(139,92,246,.16); --accent-border:rgba(196,181,253,.34);
+  --bg:#1d141e; --bg-secondary:#261a21; --surface:rgba(38,26,33,.92); --surface-2:#2b1d24; --surface-3:#372527;
+  --border:#4a352a; --border-strong:#694c34;
+  --header-bg:rgba(25,17,19,.96); --header-bg-fade:rgba(23,16,15,.8);
 }
 
 :root[data-theme="dog"][data-color="blue"] {
@@ -833,11 +848,60 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   --header-bg:rgba(24,20,9,0.96); --header-bg-fade:rgba(21,17,9,0.8);
 }
 
+:root[data-theme="capybara"][data-color="purple"] {
+  --accent:#8b5cf6; --accent-strong:#7c3aed; --accent-soft:rgba(139,92,246,.16); --accent-border:rgba(196,181,253,.34);
+  --bg:#1b131f; --bg-secondary:#231925; --surface:rgba(36,26,37,.93); --surface-2:#281d27; --surface-3:#33242b;
+  --border:#423130; --border-strong:#5c4841;
+  --header-bg:rgba(22,16,20,.96); --header-bg-fade:rgba(20,15,16,.8);
+}
+
 :root[data-theme="capybara"][data-color="blue"] {
   --accent:#7aa5e0; --accent-strong:#5b87c9; --accent-soft:rgba(122,165,224,0.16); --accent-border:rgba(178,205,244,.34);
   --bg:#14171d; --bg-secondary:#1b1d22; --surface:rgba(29,30,35,.93); --surface-2:#202125; --surface-3:#2b2829;
   --border:#3c342f; --border-strong:#564b3f;
   --header-bg:rgba(18,18,19,0.96); --header-bg-fade:rgba(17,16,15,0.8);
+}
+
+:root[data-theme="strawberry"][data-color="original"] {
+  --accent:#ef476f; --accent-strong:#d9365f; --accent-soft:rgba(239,71,111,.16); --accent-border:rgba(255,168,190,.34);
+  --bg:#16080d; --bg-secondary:#220d14; --surface:rgba(34,13,20,.93); --surface-2:#2a1019; --surface-3:#3b1722;
+  --border:#552333; --border-strong:#733044;
+  --header-bg:rgba(22,8,13,.96); --header-bg-fade:rgba(22,8,13,.8);
+}
+
+:root[data-theme="strawberry"][data-color="charcoal"] {
+  --accent:#3a3a42; --accent-strong:#2a2a31; --accent-soft:rgba(58,58,66,.16); --accent-border:rgba(150,150,166,.30);
+  --bg:#1c1318; --bg-secondary:#25161d; --surface:rgba(37,22,29,.93); --surface-2:#2a1821; --surface-3:#361d27;
+  --border:#4c2533; --border-strong:#642f40;
+  --header-bg:rgba(25,13,18,.96); --header-bg-fade:rgba(24,11,16,.8);
+}
+
+:root[data-theme="strawberry"][data-color="maroon"] {
+  --accent:#a4506b; --accent-strong:#843d54; --accent-soft:rgba(164,80,107,.16); --accent-border:rgba(214,150,172,.32);
+  --bg:#230e15; --bg-secondary:#2c121b; --surface:rgba(44,18,27,.93); --surface-2:#32141e; --surface-3:#3e1925;
+  --border:#532232; --border-strong:#6b2d40;
+  --header-bg:rgba(29,11,17,.96); --header-bg-fade:rgba(27,10,16,.8);
+}
+
+:root[data-theme="strawberry"][data-color="pink"] {
+  --accent:#e89bb0; --accent-strong:#d4798f; --accent-soft:rgba(232,155,176,.16); --accent-border:rgba(246,196,210,.34);
+  --bg:#251018; --bg-secondary:#2e141e; --surface:rgba(46,20,30,.93); --surface-2:#341621; --surface-3:#401b28;
+  --border:#542434; --border-strong:#6c2e42;
+  --header-bg:rgba(30,12,19,.96); --header-bg-fade:rgba(27,11,17,.8);
+}
+
+:root[data-theme="strawberry"][data-color="yellow"] {
+  --accent:#d9b84f; --accent-strong:#bb9a34; --accent-soft:rgba(217,184,79,.16); --accent-border:rgba(240,216,150,.34);
+  --bg:#23160e; --bg-secondary:#2c1913; --surface:rgba(44,25,19,.93); --surface-2:#321b17; --surface-3:#3f211e;
+  --border:#53282d; --border-strong:#6b323b;
+  --header-bg:rgba(29,15,14,.96); --header-bg-fade:rgba(27,13,13,.8);
+}
+
+:root[data-theme="strawberry"][data-color="purple"] {
+  --accent:#8b5cf6; --accent-strong:#7c3aed; --accent-soft:rgba(139,92,246,.16); --accent-border:rgba(196,181,253,.34);
+  --bg:#200f22; --bg-secondary:#291328; --surface:rgba(41,19,40,.93); --surface-2:#2e152b; --surface-3:#3b1a32;
+  --border:#50233b; --border-strong:#692e49;
+  --header-bg:rgba(27,12,24,.96); --header-bg-fade:rgba(25,11,20,.8);
 }
 
 
@@ -1006,3 +1070,54 @@ body::before {
     background: linear-gradient(180deg, rgba(0,0,0,.05), rgba(0,0,0,.34));
   }
 }
+
+/* --- Colour presence -------------------------------------------------------
+   The palette blocks above keep their shipped values, so 'original' still
+   renders exactly as before. This layer only strengthens how much of the
+   chosen accent the UI actually shows, using the resolved --accent so it
+   applies to every animal and every colour at once. Without a matching block
+   (see the report) these still resolve against the inherited :root tokens.
+
+   Kept deliberately short of neon: tints top out around a quarter of the
+   accent, and body text keeps using --text/--muted so contrast is unchanged. */
+:root {
+  --accent-line: color-mix(in srgb, var(--accent) 46%, transparent);
+  --accent-line-soft: color-mix(in srgb, var(--accent) 30%, var(--border));
+  --accent-wash: color-mix(in srgb, var(--accent) 13%, var(--surface-2));
+  --accent-chip: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* Tinted surfaces and borders: enough hue to read as themed, still dark. */
+.card { border-color: var(--accent-line-soft); }
+.modal { border-color: var(--accent-line-soft); }
+
+/* Selected and active controls. */
+.choice-card.active, .color-choice.active, .theme-choice.active, .filter-tab.active,
+.due-choice.active, .due-choice-cell.active, .reminder-chip.active {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent) inset;
+}
+.choice-card.active, .color-choice.active, .theme-choice.active, .filter-tab.active {
+  background: linear-gradient(145deg, var(--accent-chip), var(--surface-2));
+}
+.due-choice.active, .due-choice-cell.active { background: var(--accent-chip); }
+
+/* Interactive affordances. */
+.icon-btn:hover, .secondary:hover, .direct-add-row:hover, .direct-add-row[aria-expanded="true"] {
+  border-color: var(--accent-line-soft);
+}
+.icon-btn.active, .due-selected, .switch.on {
+  border-color: var(--accent-line);
+  background: var(--accent-chip);
+}
+.direct-add-btn { border-color: var(--accent-line-soft); background: var(--accent-wash); }
+
+/* Small badges, chips and indicators. */
+.beta-pill, .purchase-dot, .icon-btn.active, .switch.on { color: var(--accent); }
+.beta-pill, .purchase-dot { border-color: var(--accent-line-soft); background: var(--accent-chip); }
+.muted-pill { border-color: var(--accent-line-soft); }
+
+/* Accent details. No border or padding is added here, so no heading shifts. */
+.hero-eyebrow { color: color-mix(in srgb, var(--accent) 88%, white); }
+.due-line { color: color-mix(in srgb, var(--accent) 78%, white); }
+.check-btn { color: color-mix(in srgb, var(--accent) 90%, white); }
