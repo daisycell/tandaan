@@ -7,7 +7,7 @@ import { supabase } from './supabase'
 import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError, purgeLocalTombstones, visible, getFlaggedOutboxItems, retryOutboxItem, discardOutboxItem, MAX_RETRIES } from './sync'
 import type { OutboxItem } from './db'
 import { TurnstileWidget } from './components/TurnstileWidget'
-import { calculateReminderAt, resolveReminder, defaultReminderOption, REMINDER_OPTIONS, type ReminderOptionId } from './reminders'
+import { calculateReminderAt, resolveReminder, defaultReminderOption, toMinutes, validateCustomReminder, clampDueDate, minDueDateForPreset, isDueDateAllowed, REMINDER_OPTIONS, REMINDER_UNITS, type ReminderOptionId, type ReminderUnit } from './reminders'
 import { disablePushNotifications, enablePushNotifications, getPushSubscription, PushStageError, pushSupported } from './notifications'
 import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
@@ -102,16 +102,18 @@ function shortUnit(unit?: string | null) {
   return map[unit] ?? unit
 }
 
-  function taskWithReminder(title: string, dueDate: string | null, dueTime: string | null, reminderOption?: ReminderOptionId): Task {
+  function taskWithReminder(title: string, dueDate: string | null, dueTime: string | null, reminderOption?: ReminderOptionId, customMinutes?: number | null): Task {
     const now = new Date().toISOString()
     // Omitting the option preserves the original 24h lead, which is what the
     // task edit form and other write paths rely on.
     const reminder = reminderOption
-      ? resolveReminder(dueDate, dueTime, reminderOption)
+      ? resolveReminder(dueDate, dueTime, reminderOption, customMinutes)
       : { enabled: Boolean(dueDate), minutesBefore: 1440, reminderAt: calculateReminderAt(dueDate, dueTime, 1440) }
     return {
       id: newId(), title, isCompleted: false, dueDate, dueTime,
       reminderEnabled: reminder.enabled,
+      // Canonical "no reminder" storage stays as-is: enabled false with the 1440
+      // fallback, which is what every existing write path already stores.
       reminderMinutesBefore: reminder.minutesBefore ?? 1440,
       reminderAt: reminder.reminderAt,
       reminderSentAt: null,
@@ -149,6 +151,34 @@ export default function App() {
   const [dueDate, setDueDate] = useState('')
   const [dueTime, setDueTime] = useState('')
   const [dueReminderOption, setDueReminderOption] = useState<ReminderOptionId>('1d')
+  /** Which preset produced dueDate. Drives the date picker's minimum. */
+  const [dueDatePreset, setDueDatePreset] = useState<'today' | 'tomorrow' | 'custom'>('custom')
+  /**
+   * True once the user has picked a chip by hand. While it is false the time
+   * control may still re-seed the default lead time (adding a time tightens it to
+   * 1 hour), but once it is true the choice is the user's and is never overwritten.
+   */
+  const [dueReminderTouched, setDueReminderTouched] = useState(false)
+  const [dueCustomAmount, setDueCustomAmount] = useState('')
+  const [dueCustomUnit, setDueCustomUnit] = useState<ReminderUnit>('minutes')
+  const [dueCustomError, setDueCustomError] = useState<string | null>(null)
+
+  // Recomputed each render rather than memoised: "today" moves at midnight, and
+  // a stale floor would keep offering a date that has just become the past.
+  const dueToday = localISODate(new Date())
+  const dueTomorrow = tomorrowISO()
+  const dueDateMin = minDueDateForPreset(dueDatePreset, dueToday, dueTomorrow)
+
+  /** Applies a date preset and re-floors the picker and the stored value together. */
+  function chooseDuePreset(preset: 'today' | 'tomorrow' | 'custom') {
+    const min = minDueDateForPreset(preset, dueToday, dueTomorrow)
+    setDueDatePreset(preset)
+    if (preset === 'today') setDueDate(dueToday)
+    else if (preset === 'tomorrow') setDueDate(dueTomorrow)
+    // Choosing a custom date keeps the current value when it is still legal and
+    // otherwise snaps to the new floor, so an invalid date is never left behind.
+    else setDueDate(current => clampDueDate(current || min, min))
+  }
 
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [editingShopping, setEditingShopping] = useState<ShoppingItem | null>(null)
@@ -588,9 +618,20 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   function addTaskDirect() {
     const title = directTaskTitle.trim()
     if (!title) return
+    resetDueForm()
     setDuePrompt({ title })
+  }
+
+  /** Returns every due-modal field to its opening state. */
+  function resetDueForm() {
     setDueDate('')
     setDueTime('')
+    setDueDatePreset('custom')
+    setDueReminderOption(defaultReminderOption(''))
+    setDueReminderTouched(false)
+    setDueCustomAmount('')
+    setDueCustomUnit('minutes')
+    setDueCustomError(null)
   }
 
   async function addShoppingDirect() {
@@ -632,8 +673,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         await persistTask(task, 'Task saved')
       } else {
         setDuePrompt({ title })
-        setDueDate('')
-        setDueTime('')
+        resetDueForm()
       }
       return true
     }
@@ -671,6 +711,20 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     if (!duePrompt) return
     const title = duePrompt.title
 
+    // Validate before anything is written. A rejected custom value leaves the
+    // modal open and the typed title intact, so the user can correct it rather
+    // than lose the task.
+    let customMinutes: number | null = null
+    if (mode === 'dated' && dueReminderOption === 'custom') {
+      const problem = validateCustomReminder(Number(dueCustomAmount), dueCustomUnit)
+      if (problem) {
+        setDueCustomError(problem)
+        return
+      }
+      customMinutes = toMinutes(Number(dueCustomAmount), dueCustomUnit)
+      setDueCustomError(null)
+    }
+
     if (mode === 'none') {
       const task = taskWithReminder(title, null, null)
       await persistTask(task, 'Task saved')
@@ -678,13 +732,12 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       const nextDate = dueDate || null
       const nextTime = nextDate && dueTime ? dueTime : null
       if (!nextDate) return
-      const task = taskWithReminder(title, nextDate, nextTime, dueReminderOption)
+      const task = taskWithReminder(title, nextDate, nextTime, dueReminderOption, customMinutes)
       await persistTask(task, 'Task saved')
     }
 
     setDuePrompt(null)
-    setDueDate('')
-    setDueTime('')
+    resetDueForm()
     setDirectTaskTitle('')
     setExpandedAdd(null)
   }
@@ -1044,13 +1097,36 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
             <div className="due-compact">
               <span className="due-compact-label">Date</span>
               <div className="due-choice-row">
-                <button type="button" className={dueDate === localISODate(new Date()) ? 'due-choice active' : 'due-choice'} onClick={() => setDueDate(localISODate(new Date()))}>Today</button>
-                <button type="button" className={dueDate === tomorrowISO() ? 'due-choice active' : 'due-choice'} onClick={() => setDueDate(tomorrowISO())}>Tomorrow</button>
+                <button type="button" className={dueDatePreset === 'today' ? 'due-choice active' : 'due-choice'} aria-pressed={dueDatePreset === 'today'} onClick={() => chooseDuePreset('today')}>Today</button>
+                <button type="button" className={dueDatePreset === 'tomorrow' ? 'due-choice active' : 'due-choice'} aria-pressed={dueDatePreset === 'tomorrow'} onClick={() => chooseDuePreset('tomorrow')}>Tomorrow</button>
               </div>
+
+              {/* Custom date. The native input carries the same floor as the
+                  presets, so the OS picker greys out yesterday (and, with
+                  Tomorrow active, today) instead of relying on save-time checks. */}
+              <div className="due-choice-row single">
+                <button type="button" className={dueDatePreset === 'custom' ? 'due-choice active' : 'due-choice'} aria-pressed={dueDatePreset === 'custom'} onClick={() => chooseDuePreset('custom')}>Choose date</button>
+              </div>
+              {dueDatePreset === 'custom' && (
+                <input
+                  className="due-date-input"
+                  type="date"
+                  aria-label="Due date"
+                  min={dueDateMin}
+                  value={dueDate}
+                  onChange={e => {
+                    const picked = e.target.value
+                    // min on the control stops most of this, but a value can still
+                    // arrive from typing or from a date that has since passed.
+                    if (picked && !isDueDateAllowed(picked, dueDateMin)) { setDueDate(dueDateMin); return }
+                    setDueDate(picked)
+                  }}
+                />
+              )}
 
               <span className="due-compact-label">Time</span>
               <div className="due-time-wrap">
-                <button type="button" className={!dueTime ? 'due-choice active' : 'due-choice'} onClick={() => { setDueTime(''); setDueReminderOption(defaultReminderOption('')) }}>No time</button>
+                <button type="button" className={!dueTime ? 'due-choice active' : 'due-choice'} onClick={() => { setDueTime(''); if (!dueReminderTouched) setDueReminderOption(defaultReminderOption('')) }}>No time</button>
                 {/* The native time input stays mounted and transparent on top of the
                     "Set time" cell, reusing the existing overlay pattern, so tapping
                     it opens the real OS picker on iOS. */}
@@ -1062,7 +1138,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                     type="time"
                     value={dueTime}
                     aria-label="Due time"
-                    onChange={e => { setDueTime(e.target.value); setDueReminderOption(defaultReminderOption(e.target.value)) }}
+                    onChange={e => { setDueTime(e.target.value); if (!dueReminderTouched) setDueReminderOption(defaultReminderOption(e.target.value)) }}
                   />
                 </div>
               </div>
@@ -1071,9 +1147,28 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                 <span className="due-compact-label">Remind me</span>
                 <div className="reminder-chips">
                   {REMINDER_OPTIONS.map(option => (
-                    <button key={option.id} type="button" className={dueReminderOption === option.id ? 'reminder-chip active' : 'reminder-chip'} aria-pressed={dueReminderOption === option.id} onClick={() => setDueReminderOption(option.id)}>{option.label}</button>
+                    <button key={option.id} type="button" className={dueReminderOption === option.id ? 'reminder-chip active' : 'reminder-chip'} aria-pressed={dueReminderOption === option.id} onClick={() => { setDueReminderTouched(true); setDueReminderOption(option.id); if (option.id !== 'custom') setDueCustomError(null) }}>{option.label}</button>
                   ))}
                 </div>
+                {dueReminderOption === 'custom' && (
+                  <div className="reminder-custom">
+                    <input
+                      className="reminder-custom-amount"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      step={1}
+                      aria-label="Custom reminder amount"
+                      placeholder="30"
+                      value={dueCustomAmount}
+                      onChange={e => { setDueCustomAmount(e.target.value); setDueCustomError(null) }}
+                    />
+                    <select className="reminder-custom-unit" aria-label="Custom reminder unit" value={dueCustomUnit} onChange={e => { setDueCustomUnit(e.target.value as ReminderUnit); setDueCustomError(null) }}>
+                      {REMINDER_UNITS.map(unit => <option key={unit.id} value={unit.id}>{unit.label}</option>)}
+                    </select>
+                  </div>
+                )}
+                {dueCustomError && <p className="reminder-error" role="alert">{dueCustomError}</p>}
               </div>
 
               <div className="modal-actions">

@@ -11,6 +11,27 @@ export { MAX_RETRIES } from './outbox'
 
 let pendingSignInPromise: Promise<string | null> | null = null
 let onlineHandlerInstalled = false
+const SIGN_IN_TIMEOUT_MS = 15_000
+
+/**
+ * Bounds the anonymous sign-in network call.
+ *
+ * This timer starts only AFTER the CAPTCHA request has already settled, so it is
+ * sequential with the CAPTCHA lifecycle timer rather than nested inside it. Two
+ * sequential timers cannot preempt each other; two nested equal-length ones always
+ * did, which is what turned every auth failure into a generic stage timeout.
+ */
+function withSignInTimeout(work: PromiseLike<unknown>): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Anonymous sign-in timed out after ${SIGN_IN_TIMEOUT_MS / 1000}s.`))
+    }, SIGN_IN_TIMEOUT_MS)
+    work.then(
+      value => { clearTimeout(timer); resolve(value) },
+      error => { clearTimeout(timer); reject(error) },
+    )
+  })
+}
 
 /** Drops local tombstones past the retention window. */
 export async function purgeLocalTombstones(now: number = Date.now()) {
@@ -46,27 +67,60 @@ function fromDbPurchase(row: Record<string, unknown>): Purchase {
   return { id: String(row.id), itemName: String(row.item_name), quantity: row.quantity == null ? null : Number(row.quantity), unit: row.unit ? String(row.unit) : null, price: row.price == null ? null : Number(row.price), currency: String(row.currency ?? 'PHP') as 'PHP', purchasedAt: String(row.purchased_at), notes: row.notes == null ? null : String(row.notes), createdAt: String(row.created_at), updatedAt: String(row.updated_at), deletedAt: row.deleted_at ? String(row.deleted_at) : null }
 }
 
+/**
+ * Captcha lifecycle of the anonymous sign-in path. Diagnostic only: no token,
+ * user id, credential or key is ever included, so this is safe to leave enabled.
+ */
+function trace(event: string, detail?: string): void {
+  console.warn(`[push] stage=auth ${event}${detail ? ` (${detail})` : ''}`)
+}
+
 export async function getUserId() {
   if (!supabase) return null
   const { data: { session } } = await supabase.auth.getSession()
   if (session?.user?.id) return session.user.id
   if (typeof navigator !== 'undefined' && !navigator.onLine) return null
-  if (pendingSignInPromise) return pendingSignInPromise
+  if (pendingSignInPromise) {
+    trace('get-user join-in-flight')
+    return pendingSignInPromise
+  }
   pendingSignInPromise = performAnonymousSignIn()
-  const result = await pendingSignInPromise
-  pendingSignInPromise = null
-  return result
+  try {
+    return await pendingSignInPromise
+  } finally {
+    // Cleared on failure too. Clearing it only on the success path would leave a
+    // rejected promise cached, and every later retry would re-await the same
+    // dead one instead of starting a fresh sign-in.
+    pendingSignInPromise = null
+  }
 }
 
 async function performAnonymousSignIn(): Promise<string | null> {
   const sb = supabase
   if (!sb) return null
   try {
+    trace('captcha start')
     const token = await requestCaptchaToken()
-    if (!token || !token.trim()) return null
-    const { data, error } = await sb.auth.signInAnonymously({ options: { captchaToken: token } })
-    if (error) throw error
-    const userId = data.user?.id ?? null
+    trace('captcha ok')
+    if (!token || !token.trim()) {
+      trace('failed', 'empty captcha token')
+      return null
+    }
+    trace('anonymous-sign-in start')
+    const result = await withSignInTimeout(sb.auth.signInAnonymously({ options: { captchaToken: token } })) as {
+      data: { user?: { id?: string } | null } | null
+      error: { name: string; message: string } | null
+    }
+    const { data, error } = result
+    if (error) {
+      // Supabase's own reason, preserved rather than swallowed.
+      trace('anonymous-sign-in failed', `${error.name}: ${error.message}`)
+      throw error
+    }
+    // Anonymous sign-in can succeed at the transport level and still hand back no
+    // user, so data is read defensively rather than assumed non-null.
+    const userId = data?.user?.id ?? null
+    trace(userId ? 'anonymous-sign-in ok' : 'anonymous-sign-in returned no user')
     clearCaptchaError()
     return userId
   } catch (error) {
