@@ -1014,6 +1014,27 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .direct-add-btn { flex: 0 0 40px; }
 }
 
+/* The task row has a single field plus a button, so it never needs the wrapping
+   layout above. A grid pins the button to a fixed column at every width instead
+   of letting a content-sized input push it onto a second row. Scoped to the task
+   class so the shopping and purchase rows keep their multi-field wrap. */
+.direct-add-fields.direct-add-task-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  gap: 8px;
+  align-items: stretch;
+  flex-wrap: nowrap;
+}
+.direct-add-task-fields input { min-width: 0; width: 100%; }
+.direct-add-task-fields .direct-add-btn {
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
+  min-height: 48px;
+  margin: 0;
+  flex: none;
+}
+
 /* The gesture itself remains unchanged; per-row swipe instructions are intentionally omitted. */
 .swipe-delete-hint { display:none; }
 
