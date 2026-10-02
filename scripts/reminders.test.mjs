@@ -289,8 +289,8 @@ test('13. a failed CAPTCHA rejects instead of hanging', () => {
   // Every terminal path funnels through the single settlement function.
   assert.match(widget, /function settlePending\(outcome: 'resolve' \| 'reject'/)
   for (const [label, pattern] of [
-    ['onSuccess', /onSuccess=\{\(token: string\) => \{[\s\S]*?settlePending\('resolve', token\)/],
-    ['onError', /onError=\{\(\) => \{[\s\S]*?rejectCurrent\(new Error\('CAPTCHA verification failed/],
+    ['onSuccess', /function onToken\(token: string\)[\s\S]*?settlePending\('resolve', token\)/],
+    ['onError', /function onWidgetError\(\)[\s\S]*?rejectCurrent\(new Error\('CAPTCHA verification failed/],
     ['timeout', /retryTimeout = setTimeout\(\(\) => \{[\s\S]*?rejectCurrent\(new Error\(/],
     ['reset', /export function resetCaptchaState[\s\S]*?rejectCurrent\(new Error\('CAPTCHA verification was cancelled/],
   ]) {
@@ -321,6 +321,43 @@ test('14. a request before the widget is ready re-arms the render', () => {
   assert.ok(
     widget.indexOf('ensureWidgetReady()') < widget.indexOf('retryTimeout = setTimeout'),
     'readiness is established before the timer starts',
+  )
+})
+
+test('14b. the Turnstile script is loaded by its own load event, not a global onload callback', () => {
+  // Regression guard for the production hang: the old tag was
+  // `api.js?onload=onloadTurnstileCallback` with defer+async, and the callback
+  // global is deleted the moment it fires, so readiness never propagated and
+  // turnstile.render() was never called (0 challenge iframes).
+  assert.match(
+    widget,
+    /TURNSTILE_SCRIPT_SRC = 'https:\/\/challenges\.cloudflare\.com\/turnstile\/v0\/api\.js\?render=explicit'/,
+    'script is the explicit-render build with no onload parameter',
+  )
+  // The comments in the component explain the old failure by name, so the
+  // negative checks below run against code only.
+  const code = widget
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim()
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*')
+    })
+    .join('\n')
+
+  assert.doesNotMatch(code, /onload=/, 'no onload query parameter is requested')
+  assert.doesNotMatch(code, /onloadTurnstileCallback/, 'no dependency on the deleted global')
+  assert.doesNotMatch(code, /turnstile\.ready\(/, 'ready() is illegal on a deferred script tag')
+  assert.doesNotMatch(code, /turnstileRefInstance|@marsidev\/react-turnstile/, 'the wrapper library is gone')
+  assert.doesNotMatch(code, /\.defer|\.async\s*=\s*true\s*\n/, 'the tag is not deferred')
+  assert.match(widget, /script\.onload = \(\) => \{/, 'readiness comes from the tag load event')
+  assert.match(widget, /script\.onerror = \(\) => \{/, 'a script failure rejects instead of hanging')
+  assert.match(widget, /api\.render\(containerInstance, \{/, 'render is called explicitly on the container')
+  assert.match(widget, /widgetId = id/, 'the widget id is kept for reset and remove')
+  assert.match(widget, /api\.reset\(widgetId\)/, 'reset targets the stored id')
+  assert.match(
+    widget,
+    /if \(widgetId !== null\) return[\s\S]*?if \(!containerInstance\) return[\s\S]*?if \(!api\) return/,
+    'render waits for the container and the API, and never renders twice',
   )
 })
 
