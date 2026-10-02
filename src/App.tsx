@@ -8,7 +8,7 @@ import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError, purg
 import type { OutboxItem } from './db'
 import { TurnstileWidget } from './components/TurnstileWidget'
 import { calculateReminderAt, resolveReminder, defaultReminderOption, REMINDER_OPTIONS, type ReminderOptionId } from './reminders'
-import { disablePushNotifications, enablePushNotifications, getPushSubscription, pushSupported } from './notifications'
+import { disablePushNotifications, enablePushNotifications, getPushSubscription, PushStageError, pushSupported } from './notifications'
 import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
@@ -476,6 +476,31 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     // A missing VAPID key or Supabase config is a deployment problem, so it is
     // checked first and never gets reported as an incompatible device.
     if (/not configured/i.test(message)) return 'Phone reminders are not set up on this build yet.'
+    if (error instanceof PushStageError) {
+      // Each step of activation reports where it stopped, so a failure names
+      // the actual cause instead of collapsing into one generic message.
+      switch (error.stage) {
+        case 'permission':
+          return 'Notifications are blocked. Enable them in your browser/device settings.'
+        case 'subscription':
+          return error.message === 'The browser refused to remove the push subscription.'
+            ? error.message
+            : 'Could not create the phone notification subscription.'
+        case 'application-server-key':
+        case 'config':
+          return 'Phone reminders are not set up on this build yet.'
+        case 'auth':
+          return 'Could not sign you in to register this phone for reminders.'
+        case 'service-worker':
+          return 'Tandaan is still starting up on this device. Try turning phone reminders on again.'
+        case 'register':
+          return error.message.startsWith('Could not remove')
+            ? error.message
+            : 'Could not register this phone for reminders.'
+        case 'environment':
+          break
+      }
+    }
     if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
       return 'Notifications are blocked. Enable them in your browser/device settings.'
     }
