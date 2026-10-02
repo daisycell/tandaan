@@ -24,11 +24,32 @@ function clearPending(): void {
   pendingReject = null
 }
 
-function rejectCurrent(reason: Error): void {
+/**
+ * Settles the in-flight request exactly once.
+ *
+ * The resolver and rejector are read BEFORE the pending state is cleared,
+ * because clearing them first is what used to strand the promise: the old
+ * rejectCurrent() nulled pendingReject without ever calling it, so the awaiter
+ * in getUserId() waited out its own timeout and every later request received
+ * the same deadlocked promise from the `if (tokenPromise)` check.
+ *
+ * Clearing tokenPromise here is what makes the next call start a fresh request
+ * instead of re-serving a promise that can no longer settle.
+ */
+function settlePending(outcome: 'resolve' | 'reject', value: string | Error): void {
+  const resolve = pendingResolve
+  const reject = pendingReject
   clearPending()
+  tokenPromise = null
   requestActive = false
   if (retryTimeout) { clearTimeout(retryTimeout); retryTimeout = null }
+  if (outcome === 'resolve') resolve?.(value as string)
+  else reject?.(value as Error)
+}
+
+function rejectCurrent(reason: Error): void {
   captchaError = reason
+  settlePending('reject', reason)
 }
 
 export async function requestCaptchaToken(): Promise<string> {
@@ -62,6 +83,13 @@ export async function requestCaptchaToken(): Promise<string> {
 }
 
 export function resetCaptchaState(): void {
+  // A reset abandons whatever was in flight, so that request has to reject
+  // rather than be silently dropped. No caller awaits it today, but leaving it
+  // unsettled is the exact failure this module is meant to avoid.
+  if (pendingReject) {
+    rejectCurrent(new Error('CAPTCHA verification was cancelled. Please try again.'))
+    return
+  }
   requestActive = false
   tokenPromise = null
   clearPending()
@@ -118,16 +146,13 @@ export function TurnstileWidget() {
         if (!token || !token.trim()) return
         tokenIssuedAt = Date.now()
         if (!requestActive) {
+          // Token arrived with nobody waiting: keep it for the next request,
+          // still inside the reuse window.
           lastToken = token
           return
         }
         lastToken = null
-        if (retryTimeout) { clearTimeout(retryTimeout); retryTimeout = null }
-        requestActive = false
-        const resolve = pendingResolve
-        tokenPromise = null
-        clearPending()
-        resolve?.(token)
+        settlePending('resolve', token)
       }}
       onExpire={() => {
         lastToken = null

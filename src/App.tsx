@@ -490,7 +490,9 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         case 'config':
           return 'Phone reminders are not set up on this build yet.'
         case 'auth':
-          return 'Could not sign you in to register this phone for reminders.'
+          // The auth stage now carries the real reason (CAPTCHA, network,
+          // sign-in rejected), so it is shown rather than a generic failure.
+          return error.message
         case 'service-worker':
           return 'Tandaan is still starting up on this device. Try turning phone reminders on again.'
         case 'register':
@@ -895,8 +897,8 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
             <span>Add a task</span><Plus size={17} />
           </button>
           {expandedAdd === 'task' && (
-            <div className="direct-add-fields">
-              <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Task title" aria-label="Task title" autoFocus />
+<div className="direct-add-fields direct-add-task-fields">
+            <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Task title" aria-label="Task title" autoFocus />
               <button className="direct-add-btn" onClick={() => void addTaskDirect()} disabled={!directTaskTitle.trim()} aria-label="Save task"><Check size={17} /></button>
             </div>
           )}

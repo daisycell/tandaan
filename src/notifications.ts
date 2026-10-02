@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { getUserId } from './sync'
+import { getSignInError, getUserId } from './sync'
 
 /**
  * Push activation can stall at any await in the chain, and a stalled await never
@@ -62,6 +62,88 @@ export function pushSupported() {
   return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
 }
 
+/**
+ * Explains an auth failure using the reason that actually caused it.
+ *
+ * A failed CAPTCHA is a configuration or challenge problem, not a mystery, so
+ * the real message is kept instead of being flattened into "could not sign you
+ * in". getSignInError() is the existing channel sync.ts already uses to surface
+ * the CAPTCHA error, so no second error store is introduced.
+ */
+function authFailureMessage(error: unknown): string {
+  const captcha = getSignInError()
+  if (captcha?.message) return captcha.message
+  const message = error instanceof Error ? error.message : ''
+  if (/captcha|turnstile/i.test(message)) return message
+  if (message) return `Tandaan could not sign you in on this device: ${message}`
+  return 'Tandaan could not sign you in on this device.'
+}
+
+/**
+ * Reads the current session without ever attempting to create one.
+ * Returns null when there is no session, and never triggers a CAPTCHA.
+ */
+async function existingSessionUserId(): Promise<string | null> {
+  const sb = supabase
+  if (!sb) return null
+  const { data } = await withTimeout('auth', sb.auth.getSession())
+  return data?.session?.user?.id ?? null
+}
+
+/**
+ * Resolves the user id for registration, preferring an existing session.
+ *
+ * An already-authenticated device must not be pushed back through anonymous
+ * sign-in, because that costs a fresh CAPTCHA and is the step that was failing.
+ * Only when no session exists is the existing Tandaan auth path used, once, and
+ * the session is then verified rather than trusted.
+ */
+async function resolveUserId(): Promise<string> {
+  const sb = supabase
+  if (!sb) throw new PushStageError('config', 'Supabase is not configured.')
+
+  try {
+    const existing = await existingSessionUserId()
+    if (existing) {
+      diagnose('auth', 'ok', 'existing session')
+      return existing
+    }
+  } catch (error) {
+    diagnose('auth', 'failed', error)
+    throw new PushStageError('auth', authFailureMessage(error), { cause: error })
+  }
+
+  // One pass through the existing path in sync.ts, which performs anonymous
+  // sign-in behind the CAPTCHA. It rethrows its own error, so that error is the
+  // real reason and is carried through rather than replaced.
+  let userId: string | null = null
+  try {
+    userId = await withTimeout('auth', getUserId())
+  } catch (error) {
+    diagnose('auth', 'failed', error)
+    throw new PushStageError('auth', authFailureMessage(error), { cause: error })
+  }
+
+  // Verify rather than trust: confirm a session really exists now.
+  try {
+    const verified = await existingSessionUserId()
+    if (verified) {
+      diagnose('auth', 'ok', 'anonymous session')
+      return verified
+    }
+    if (userId) {
+      diagnose('auth', 'ok', 'user id from auth path')
+      return userId
+    }
+  } catch (error) {
+    diagnose('auth', 'failed', error)
+    throw new PushStageError('auth', authFailureMessage(error), { cause: error })
+  }
+
+  diagnose('auth', 'failed', 'no session after sign-in')
+  throw new PushStageError('auth', authFailureMessage(null))
+}
+
 export async function getPushSubscription() {
   if (!pushSupported()) return null
   const registration = await withTimeout('service-worker', navigator.serviceWorker.ready)
@@ -95,18 +177,7 @@ export async function enablePushNotifications() {
   // getUserId() can reach the anonymous sign-in path, which waits on a CAPTCHA
   // that is not guaranteed to resolve. Bounded here so a dead challenge shows
   // an error instead of pinning the toggle in its busy state.
-  let userId: string | null
-  try {
-    userId = await withTimeout('auth', getUserId())
-  } catch (error) {
-    diagnose('auth', 'failed', error)
-    throw error instanceof PushStageError ? error : new PushStageError('auth', 'Could not confirm the signed-in Tandaan user.', { cause: error })
-  }
-  if (!userId) {
-    diagnose('auth', 'failed', 'no user id')
-    throw new PushStageError('auth', 'No signed-in Tandaan user.')
-  }
-  diagnose('auth', 'ok')
+  const userId = await resolveUserId()
 
   let registration: ServiceWorkerRegistration
   try {
@@ -178,7 +249,9 @@ export async function disablePushNotifications() {
   // user_id alone, which would strip every other device on the same account.
   const endpoint = subscription?.toJSON().endpoint
   if (supabase && endpoint) {
-    const userId = await withTimeout('auth', getUserId())
+    // Session only: turning reminders off must never start a fresh sign-in, and
+    // without a session there is no row of ours to delete.
+    const userId = await existingSessionUserId().catch(() => null)
     if (userId) {
       const { error } = await supabase
         .from('push_subscriptions')
