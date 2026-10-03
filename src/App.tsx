@@ -130,7 +130,7 @@ export default function App() {
   const [shopping, setShopping] = useState<ShoppingItem[]>([])
   const [purchases, setPurchases] = useState<Purchase[]>([])
   const [debts, setDebts] = useState<Debt[]>([])
-  const [debtPage, setDebtPage] = useState<'list' | 'detail'>('list')
+  const [debtPage, setDebtPage] = useState<'home' | 'list' | 'detail'>('home')
   const [debtDirection, setDebtDirection] = useState<Debt['direction']>('owe')
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null)
   const [debtSearch, setDebtSearch] = useState('')
@@ -1016,44 +1016,46 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         </div>
       </header>
 
-      <DebtView
-        debts={filteredDebts}
-        filter={debtFilter}
-        search={debtSearch}
-        addOpen={debtAddOpen}
-        direction={debtDirection}
-        person={debtPerson}
-        amount={debtAmount}
-        description={debtDescription}
-        dueDate={debtDueDate}
-        reminder={debtReminder}
-        selected={selectedDebt}
-        paymentAmount={paymentAmount}
-        paymentNote={paymentNote}
-        setFilter={setDebtFilter}
-        setSearch={setDebtSearch}
-        setAddOpen={setDebtAddOpen}
-        setDirection={setDebtDirection}
-        setPerson={setDebtPerson}
-        setAmount={setDebtAmount}
-        setDescription={setDebtDescription}
-        setDueDate={setDebtDueDate}
-        setReminder={setDebtReminder}
-        setPaymentAmount={setPaymentAmount}
-        setPaymentNote={setPaymentNote}
-        onAdd={() => void addDebt()}
-        onOpen={openDebtDetail}
-        onBack={openDebtList}
-        onPayment={() => selectedDebt && void addDebtPayment(selectedDebt)}
-        onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
-        onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
-      />
-      <button className="debt-home-summary card" onClick={openDebtList}>
-        <span><HandCoins size={18}/> Debt / Utang</span>
-        <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
-        <small>{formatDebtMoney(debtRemainingOwe)} I owe · {formatDebtMoney(debtRemainingOwed)} owed to me</small>
-      </button>
+      {debtPage !== 'home' && (
+        <DebtView
+          debts={filteredDebts}
+          filter={debtFilter}
+          search={debtSearch}
+          addOpen={debtAddOpen}
+          direction={debtDirection}
+          person={debtPerson}
+          amount={debtAmount}
+          description={debtDescription}
+          dueDate={debtDueDate}
+          reminder={debtReminder}
+          selected={selectedDebt}
+          paymentAmount={paymentAmount}
+          paymentNote={paymentNote}
+          setFilter={setDebtFilter}
+          setSearch={setDebtSearch}
+          setAddOpen={setDebtAddOpen}
+          setDirection={setDebtDirection}
+          setPerson={setDebtPerson}
+          setAmount={setDebtAmount}
+          setDescription={setDebtDescription}
+          setDueDate={setDebtDueDate}
+          setReminder={setDebtReminder}
+          setPaymentAmount={setPaymentAmount}
+          setPaymentNote={setPaymentNote}
+          onAdd={() => void addDebt()}
+          onOpen={openDebtDetail}
+          onBack={openDebtList}
+          onPayment={() => selectedDebt && void addDebtPayment(selectedDebt)}
+          onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
+          onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
+        />
+        <button className="debt-home-summary card" onClick={openDebtList}>
+          <span><HandCoins size={18}/> Debt / Utang</span>
+          <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
+          <small>{formatDebtMoney(debtRemainingOwe)} I owe · {formatDebtMoney(debtRemainingOwed)} owed to me</small>
+        </button>
 
+      )}
       <section className="hero">
         <h1>{greeting}, {name}</h1>
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
