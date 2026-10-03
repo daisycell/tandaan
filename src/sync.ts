@@ -3,7 +3,7 @@ import { supabase } from './supabase'
 import { decideMerge, isPurgeableTombstone, shouldPushOrphan, visible, type Tombstoned } from './tombstones'
 import { MAX_RETRIES, classifyOutboxError, nextRetryState, shouldSkipItem, suppressesRemoteCopy } from './outbox'
 import type { OutboxItem } from './db'
-import type { Purchase, ShoppingItem, Task, ThemeId } from './types'
+import type { Debt, Purchase, ShoppingItem, Task, ThemeId } from './types'
 
 export { visible } from './tombstones'
 export { MAX_RETRIES } from './outbox'
@@ -47,6 +47,12 @@ if (typeof window !== 'undefined' && !onlineHandlerInstalled) {
   })
 }
 
+function toDbDebt(debt: Debt, userId: string) {
+  return { id: debt.id, user_id: userId, direction: debt.direction, person_name: debt.personName, description: debt.description ?? null, original_amount_cents: debt.originalAmountCents, due_date: debt.dueDate ?? null, reminder_enabled: debt.reminderEnabled, reminder_minutes_before: debt.reminderMinutesBefore ?? null, reminder_at: debt.reminderAt ?? null, reminder_sent_at: debt.reminderSentAt ?? null, payments: debt.payments, notes: debt.notes ?? null, created_at: debt.createdAt, updated_at: debt.updatedAt, deleted_at: debt.deletedAt ?? null }
+}
+function fromDbDebt(row: Record<string, unknown>): Debt {
+  return { id: String(row.id), direction: row.direction === 'owed_to_me' ? 'owed_to_me' : 'owe', personName: String(row.person_name), description: row.description == null ? null : String(row.description), originalAmountCents: Math.max(0, Number(row.original_amount_cents) || 0), dueDate: row.due_date ? String(row.due_date) : null, reminderEnabled: Boolean(row.reminder_enabled), reminderMinutesBefore: row.reminder_minutes_before == null ? null : Number(row.reminder_minutes_before), reminderAt: row.reminder_at ? String(row.reminder_at) : null, reminderSentAt: row.reminder_sent_at ? String(row.reminder_sent_at) : null, payments: Array.isArray(row.payments) ? row.payments as Debt['payments'] : [], notes: row.notes == null ? null : String(row.notes), createdAt: String(row.created_at), updatedAt: String(row.updated_at), deletedAt: row.deleted_at ? String(row.deleted_at) : null }
+}
 function toDbTask(task: Task, userId: string) {
   return { id: task.id, user_id: userId, title: task.title, is_completed: task.isCompleted, due_date: task.dueDate ?? null, due_time: task.dueTime ?? null, reminder_enabled: task.reminderEnabled ?? true, reminder_minutes_before: task.reminderMinutesBefore ?? 1440, reminder_at: task.reminderAt ?? null, reminder_sent_at: task.reminderSentAt ?? null, created_at: task.createdAt, updated_at: task.updatedAt, deleted_at: task.deletedAt ?? null }
 }
@@ -159,12 +165,20 @@ async function applyOutboxItem(item: OutboxItem, userId: string) {
       const { error } = await supabase!.from('shopping_items').update({ deleted_at: new Date().toISOString() }).eq('id', item.recordId).eq('user_id', userId)
       if (error) throw error
     }
-  } else {
+  } else if (item.entity === 'purchase') {
     if (item.operation === 'upsert' && item.payload) {
       const { error } = await supabase!.from('purchases').upsert(toDbPurchase(item.payload as Purchase, userId), { onConflict: 'id' })
       if (error) throw error
     } else if (item.operation === 'delete') {
       const { error } = await supabase!.from('purchases').update({ deleted_at: new Date().toISOString() }).eq('id', item.recordId).eq('user_id', userId)
+      if (error) throw error
+    }
+  } else if (item.entity === 'debt') {
+    if (item.operation === 'upsert' && item.payload) {
+      const { error } = await supabase!.from('debts').upsert(toDbDebt(item.payload as Debt, userId), { onConflict: 'id' })
+      if (error) throw error
+    } else if (item.operation === 'delete') {
+      const { error } = await supabase!.from('debts').update({ deleted_at: new Date().toISOString() }).eq('id', item.recordId).eq('user_id', userId)
       if (error) throw error
     }
   }
@@ -247,7 +261,7 @@ export async function discardOutboxItem(id: number) {
   await db.outbox.delete(id)
 }
 
-async function pendingDeletes(entity: 'task' | 'shopping' | 'purchase') {
+async function pendingDeletes(entity: 'task' | 'shopping' | 'purchase' | 'debt') {
   const rows = await db.outbox.where('entity').equals(entity).and(item => item.operation === 'delete').toArray()
   // Flagged deletes are excluded: an item that can never succeed would otherwise
   // suppress the remote copy forever, freezing that record in limbo.
@@ -299,8 +313,21 @@ async function mergePurchases(remote: Purchase[], local: Purchase[], deleted: Se
   }
 }
 
+async function mergeDebts(remote: Debt[], local: Debt[], deleted: Set<string>) {
+  const remoteIds = new Set(remote.map(r => r.id))
+  for (const r of remote) {
+    const localCopy = local.find(item => item.id === r.id)
+    const action = decideMerge(r, localCopy, deleted.has(r.id))
+    if (action.kind === 'skip') continue
+    if (action.kind === 'put-tombstone' || action.kind === 'put-remote') { await db.debts.put(r); continue }
+    if (action.kind === 'queue-delete') { await db.outbox.add({ entity: 'debt', operation: 'delete', recordId: r.id, createdAt: new Date().toISOString() }); continue }
+    if (localCopy) await db.outbox.add({ entity: 'debt', operation: 'upsert', recordId: localCopy.id, payload: localCopy, createdAt: new Date().toISOString() })
+  }
+  for (const l of local) if (shouldPushOrphan(l, remoteIds, deleted.has(l.id))) await db.outbox.add({ entity: 'debt', operation: 'upsert', recordId: l.id, payload: l, createdAt: new Date().toISOString() })
+}
+
 export async function syncAll() {
-  const localOnly = { tasks: visible(await db.tasks.toArray()), shoppingItems: visible(await db.shopping.toArray()), purchases: visible(await db.purchases.toArray()) }
+  const localOnly = { tasks: visible(await db.tasks.toArray()), shoppingItems: visible(await db.shopping.toArray()), purchases: visible(await db.purchases.toArray()), debts: visible(await db.debts.toArray()) }
   if (!supabase) return localOnly
 
   const userId = await getUserId()
@@ -311,29 +338,34 @@ export async function syncAll() {
   // null rows makes a delete on one device look like the record never existed,
   // so the other device's merge would treat its local copy as orphaned and
   // re-upload it. We need to see the tombstone to purge instead.
-  const [taskRes, shoppingRes, purchaseRes] = await Promise.all([
+  const [taskRes, shoppingRes, purchaseRes, debtRes] = await Promise.all([
     supabase.from('tasks').select('id,title,is_completed,due_date,due_time,reminder_enabled,reminder_minutes_before,reminder_at,reminder_sent_at,created_at,updated_at,deleted_at').eq('user_id', userId),
     supabase.from('shopping_items').select('id,name,quantity,unit,expected_price,is_purchased,created_at,updated_at,deleted_at').eq('user_id', userId),
-    supabase.from('purchases').select('id,item_name,quantity,unit,price,currency,purchased_at,notes,created_at,updated_at,deleted_at').eq('user_id', userId)
+    supabase.from('purchases').select('id,item_name,quantity,unit,price,currency,purchased_at,notes,created_at,updated_at,deleted_at').eq('user_id', userId),
+    supabase.from('debts').select('id,user_id,direction,person_name,description,original_amount_cents,due_date,reminder_enabled,reminder_minutes_before,reminder_at,reminder_sent_at,payments,notes,created_at,updated_at,deleted_at').eq('user_id', userId)
   ])
   if (taskRes.error) throw taskRes.error
   if (shoppingRes.error) throw shoppingRes.error
   if (purchaseRes.error) throw purchaseRes.error
+  if (debtRes.error) throw debtRes.error
 
   const remoteTasks = (taskRes.data ?? []).map(row => fromDbTask(row as Record<string, unknown>))
   const remoteShopping = (shoppingRes.data ?? []).map(row => fromDbShopping(row as Record<string, unknown>))
   const remotePurchases = (purchaseRes.data ?? []).map(row => fromDbPurchase(row as Record<string, unknown>))
+  const remoteDebts = (debtRes.data ?? []).map(row => fromDbDebt(row as Record<string, unknown>))
   const localTasks = await db.tasks.toArray()
   const localShopping = await db.shopping.toArray()
   const localPurchases = await db.purchases.toArray()
+  const localDebts = await db.debts.toArray()
 
   await mergeTasks(remoteTasks, localTasks, await pendingDeletes('task'))
   await mergeShopping(remoteShopping, localShopping, await pendingDeletes('shopping'))
   await mergePurchases(remotePurchases, localPurchases, await pendingDeletes('purchase'))
+  await mergeDebts(remoteDebts, localDebts, await pendingDeletes('debt'))
   await flushOutbox(userId)
   await purgeLocalTombstones()
 
-  return { tasks: visible(await db.tasks.toArray()), shoppingItems: visible(await db.shopping.toArray()), purchases: visible(await db.purchases.toArray()) }
+  return { tasks: visible(await db.tasks.toArray()), shoppingItems: visible(await db.shopping.toArray()), purchases: visible(await db.purchases.toArray()), debts: visible(await db.debts.toArray()) }
 }
 
 export async function syncTasks() {
