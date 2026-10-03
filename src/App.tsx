@@ -662,7 +662,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       const q = debtSearch.trim().toLowerCase()
       return matchFilter && (!q || d.personName.toLowerCase().includes(q) || (d.description ?? '').toLowerCase().includes(q))
     }).sort((a,b) => (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31'))
-  })
+  }}, [liveDebts, debtFilter, debtSearch])
 
   async function persistTask(task: Task, message = 'Saved') {
     await db.tasks.put(task)
