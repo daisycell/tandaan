@@ -201,6 +201,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .summary-card-sticker { position:absolute; z-index:1; width:76px; height:76px; right:-2px; top:-3px; object-fit:contain; pointer-events:none; filter:drop-shadow(0 6px 10px rgba(0,0,0,.24)); opacity:.9; animation:statStickerFloat 5.5s ease-in-out infinite; }
 .summary-card-sticker.sticker-b { animation-delay:-1.8s; transform:rotate(7deg); }
 .summary-card-sticker.sticker-c { animation-delay:-3.6s; transform:rotate(-6deg); }
+.home-stat-grid { margin-bottom:28px; }
 @keyframes statStickerFloat { 0%,100% { transform:translateY(0) rotate(-4deg); } 50% { transform:translateY(-4px) rotate(4deg); } }
 
 .card { background:var(--surface); border:1px solid var(--border); border-radius:20px; box-shadow:0 14px 34px rgba(0,0,0,.18); }
