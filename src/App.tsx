@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Pencil, Plus, Settings, Sparkles, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal, ArrowLeft, Search, HandCoins, Trash2 } from 'lucide-react'
+import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Pencil, Plus, Settings, Sparkles, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal, ArrowLeft, Search, HandCoins, Trash2, ShoppingCart, Receipt } from 'lucide-react'
 import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeColor, setLocalThemeCustomizations, queueDebtUpsert, queueDebtDelete } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { type ParsedInput, type ParsedLine } from './parser'
@@ -1222,11 +1222,10 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           {listPage === 'tasks' && (
             <>
               <div className="subpage-header">
+                <button className="icon-btn list-back-btn" onClick={closeListPage} aria-label="Back to Home" title="Back to Home"><ArrowLeft size={18} /></button>
                 <div>
                   <h1>Tasks</h1>
-                  <p>Today, upcoming, overdue, and completed tasks in one place.</p>
                 </div>
-                <button className="secondary back-btn" onClick={closeListPage}><ArrowLeft size={16} /> Home</button>
               </div>
               <div className="filter-tabs" role="tablist" aria-label="Task filters">
                 {([
@@ -1251,7 +1250,12 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                   )}
                 </div>
                 <div className="task-list full-list">
-                  {filteredTasks.slice(0, visibleTaskCount).length === 0 && <div className="empty card">{taskFilter === 'done' ? 'No completed tasks.' : taskFilter === 'upcoming' ? 'No upcoming tasks.' : taskFilter === 'overdue' ? 'No overdue tasks.' : 'No tasks for today.'}</div>}
+                  {filteredTasks.slice(0, visibleTaskCount).length === 0 && (
+                    <div className="empty card list-empty">
+                      <Check size={22} />
+                      <span>{taskFilter === 'done' ? 'No completed tasks.' : taskFilter === 'upcoming' ? 'No upcoming tasks.' : taskFilter === 'overdue' ? 'No overdue tasks.' : 'No tasks for today.'}</span>
+                    </div>
+                  )}
                   {groupByDate(filteredTasks.slice(0, visibleTaskCount), taskDateKey).map(group => (
                     <div key={group.key} className="date-group">
                       <div className="date-group-label">{formatListDate(group.key)}</div>
@@ -1283,11 +1287,10 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           {listPage === 'shopping' && (
             <>
               <div className="subpage-header">
+                <button className="icon-btn list-back-btn" onClick={closeListPage} aria-label="Back to Home" title="Back to Home"><ArrowLeft size={18} /></button>
                 <div>
                   <h1>Shopping</h1>
-                  <p>Keep the buy list and bought history in the same compact view.</p>
                 </div>
-                <button className="secondary back-btn" onClick={closeListPage}><ArrowLeft size={16} /> Home</button>
               </div>
               <div className="filter-tabs" role="tablist" aria-label="Shopping filters">
                 {([
@@ -1312,7 +1315,12 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                   )}
                 </div>
                 <div className="task-list full-list">
-                  {filteredShopping.slice(0, visibleShoppingCount).length === 0 && <div className="empty card">{shoppingFilter === 'bought' ? 'No bought items.' : 'No items to buy.'}</div>}
+                  {filteredShopping.slice(0, visibleShoppingCount).length === 0 && (
+                    <div className="empty card list-empty">
+                      <ShoppingCart size={22} />
+                      <span>{shoppingFilter === 'bought' ? 'No bought items.' : 'No items to buy.'}</span>
+                    </div>
+                  )}
                   {groupByDate(filteredShopping.slice(0, visibleShoppingCount), shoppingDateKey).map(group => (
                     <div key={group.key} className="date-group">
                       <div className="date-group-label">{formatListDate(group.key)}</div>
@@ -1341,11 +1349,10 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           {listPage === 'purchases' && (
             <>
               <div className="subpage-header">
+                <button className="icon-btn list-back-btn" onClick={closeListPage} aria-label="Back to Home" title="Back to Home"><ArrowLeft size={18} /></button>
                 <div>
                   <h1>Purchases</h1>
-                  <p>Search your purchase history by day or date range.</p>
                 </div>
-                <button className="secondary back-btn" onClick={closeListPage}><ArrowLeft size={16} /> Home</button>
               </div>
               <div className="purchase-toolbar card">
                 <div className="purchase-range-tabs filter-tabs" role="tablist" aria-label="Purchase date ranges">
@@ -1372,7 +1379,12 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                 <small>{filteredPurchases.length} item{filteredPurchases.length === 1 ? '' : 's'}</small>
               </div>
               <div className="task-list full-list compact-section">
-                {filteredPurchases.slice(0, visiblePurchaseCount).length === 0 && <div className="empty card">No purchases match this range.</div>}
+                {filteredPurchases.slice(0, visiblePurchaseCount).length === 0 && (
+                  <div className="empty card list-empty">
+                    <Receipt size={22} />
+                    <span>No purchases match this range.</span>
+                  </div>
+                )}
                 {groupByDate(filteredPurchases.slice(0, visiblePurchaseCount), purchaseDateKey).map(group => {
                   const subtotal = group.items.reduce((sum, item) => sum + (item.price ?? 0), 0)
                   const priced = group.items.filter(item => item.price != null).length
