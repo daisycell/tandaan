@@ -483,8 +483,10 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     if (purchaseRange === 'this_week' || purchaseRange === 'last_week') {
       const mondayOffset = (base.getDay() + 6) % 7
       start.setDate(base.getDate() - mondayOffset + (purchaseRange === 'last_week' ? -7 : 0))
-      end.setTime(start.getTime())
-      if (purchaseRange === 'last_week') end.setDate(end.getDate() + 6)
+      if (purchaseRange === 'last_week') {
+        end.setTime(start.getTime())
+        end.setDate(end.getDate() + 6)
+      }
     } else if (purchaseRange === 'this_month') {
       start.setDate(1)
     } else if (purchaseRange === 'custom') {
