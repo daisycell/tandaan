@@ -1,14 +1,14 @@
 import Dexie, { type Table } from 'dexie'
-import type { Purchase, ShoppingItem, Task } from './types'
+import type { Debt, Purchase, ShoppingItem, Task } from './types'
 
 type LocalSettings = { key: string; value: string }
 
 export type OutboxItem = {
   id?: number
-  entity: 'task' | 'shopping' | 'purchase'
+  entity: 'task' | 'shopping' | 'purchase' | 'debt'
   operation: 'upsert' | 'delete'
   recordId: string
-  payload?: Task | ShoppingItem | Purchase
+  payload?: Task | ShoppingItem | Purchase | Debt
   createdAt: string
   /** Server rejections so far. Reset by a manual retry. */
   retryCount?: number
@@ -22,6 +22,7 @@ class TandaanDB extends Dexie {
   tasks!: Table<Task, string>
   shopping!: Table<ShoppingItem, string>
   purchases!: Table<Purchase, string>
+  debts!: Table<Debt, string>
   settings!: Table<LocalSettings, string>
   outbox!: Table<OutboxItem, number>
 
@@ -31,6 +32,7 @@ class TandaanDB extends Dexie {
     this.version(2).stores({ tasks: 'id, updatedAt, dueDate, isCompleted', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
     this.version(3).stores({ tasks: 'id, updatedAt, dueDate, isCompleted', shopping: 'id, updatedAt, isPurchased', purchases: 'id, updatedAt, purchasedAt', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
     this.version(4).stores({ tasks: 'id, updatedAt, dueDate, isCompleted, reminderAt', shopping: 'id, updatedAt, isPurchased', purchases: 'id, updatedAt, purchasedAt', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
+    this.version(5).stores({ tasks: 'id, updatedAt, dueDate, isCompleted, reminderAt', shopping: 'id, updatedAt, isPurchased', purchases: 'id, updatedAt, purchasedAt', debts: 'id, updatedAt, dueDate, direction', settings: 'key', outbox: '++id, entity, operation, recordId, createdAt' })
   }
 }
 
@@ -89,3 +91,6 @@ export async function queueDelete(entity: OutboxItem['entity'], id: string) {
 
 export const queueTaskUpsert = (task: Task) => queueUpsert('task', task)
 export const queueTaskDelete = (id: string) => queueDelete('task', id)
+
+export const queueDebtUpsert = (debt: Debt) => queueUpsert('debt', debt)
+export const queueDebtDelete = (id: string) => queueDelete('debt', id)
