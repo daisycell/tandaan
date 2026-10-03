@@ -34,6 +34,8 @@ type Props = {
   onPayment: () => void
   onMarkPaid: () => void
   onDelete: () => void
+  homeMode?: boolean
+  onSeeAll?: () => void
 }
 
 function statusLabel(status: ReturnType<typeof debtStatus>) {
@@ -41,6 +43,37 @@ function statusLabel(status: ReturnType<typeof debtStatus>) {
 }
 
 export default function DebtView(p: Props) {
+  if (p.homeMode) {
+    const activeDebts = p.allDebts.filter(d => remainingCents(d) > 0)
+    const preview = activeDebts.slice().sort((a, b) => (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31')).slice(0, 3)
+    return <section className="section-block debt-home-section">
+      <div className="section-heading"><h2>Debt</h2><span>{activeDebts.length} active</span></div>
+      <div className="direct-add">
+        <button type="button" className="direct-add-row" onClick={()=>p.setAddOpen(!p.addOpen)} aria-expanded={p.addOpen} aria-label="Add a debt">
+          <span>Add a debt</span><Plus size={17}/>
+        </button>
+        {p.addOpen && <div className="debt-form">
+          <div className="filter-tabs"><button className={p.direction==='owe'?'filter-tab active':'filter-tab'} onClick={()=>p.setDirection('owe')}>I owe</button><button className={p.direction==='owed_to_me'?'filter-tab active':'filter-tab'} onClick={()=>p.setDirection('owed_to_me')}>Owed to me</button></div>
+          <input value={p.person} onChange={e=>p.setPerson(e.target.value)} placeholder="Person name"/>
+          <input inputMode="decimal" value={p.amount} onChange={e=>p.setAmount(e.target.value)} placeholder="Amount (₱)"/>
+          <input value={p.description} onChange={e=>p.setDescription(e.target.value)} placeholder="What is it for? (optional)"/>
+          <input type="date" value={p.dueDate} onChange={e=>p.setDueDate(e.target.value)}/>
+          <label className="debt-reminder-toggle"><input type="checkbox" checked={p.reminder} onChange={e=>p.setReminder(e.target.checked)}/> Remind me</label>
+          <button className="primary full" onClick={p.onAdd} disabled={!p.person.trim() || !p.amount.trim()}><Check size={16}/> Add debt</button>
+        </div>}
+      </div>
+      <div className="task-list">
+        {preview.length === 0 ? <div className="empty card list-empty"><HandCoins size={22}/><span>No active debts.</span></div> : preview.map(d => {
+          const remaining = remainingCents(d)
+          const pct = paidPercent(d)
+          return <button key={d.id} className="task-card card debt-home-card" onClick={()=>p.onOpen(d.id)}>
+            <div className="task-main"><div className="task-title">{d.personName}</div><div className="detail-line"><span>{d.direction==='owe'?'I owe':'Owed to me'}</span><span>{formatDebtMoney(remaining)}</span></div><div className="debt-progress"><span style={{width:`${pct}%`}} /></div></div>
+          </button>
+        })}
+      </div>
+      {activeDebts.length > 3 && p.onSeeAll && <button className="summary-see-all section-see-all" onClick={p.onSeeAll}>See all</button>}
+    </section>
+  }
   if (p.selected) {
     const d = p.selected
     const remaining = remainingCents(d)
