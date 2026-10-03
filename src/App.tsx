@@ -1137,22 +1137,31 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                   onClick={() => {
                     const input = dueTimeRef.current
                     if (!input) return
-                    if (typeof input.showPicker === 'function') input.showPicker()
-                    else input.focus()
+                    try {
+                      if (typeof input.showPicker === 'function') input.showPicker()
+                      else input.click()
+                    } catch {
+                      input.click()
+                    }
                   }}
                   onKeyDown={e => {
                     if (e.key !== 'Enter' && e.key !== ' ') return
                     e.preventDefault()
                     const input = dueTimeRef.current
                     if (!input) return
-                    if (typeof input.showPicker === 'function') input.showPicker()
-                    else input.focus()
+                    try {
+                      if (typeof input.showPicker === 'function') input.showPicker()
+                      else input.click()
+                    } catch {
+                      input.click()
+                    }
                   }}
                 >
                   <span className="due-choice-label">{dueTime || 'Set time'}</span>
                   <input
                     ref={dueTimeRef}
                     className="due-time-input-overlay"
+                    style={{ pointerEvents: 'none' }}
                     type="time"
                     value={dueTime}
                     aria-label="Due time"
