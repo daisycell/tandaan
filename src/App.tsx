@@ -1019,6 +1019,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       {debtPage !== 'home' && (
         <DebtView
           debts={filteredDebts}
+          allDebts={liveDebts}
           filter={debtFilter}
           search={debtSearch}
           addOpen={debtAddOpen}
@@ -1049,13 +1050,13 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
           onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
         />
-        <button className="debt-home-summary card" onClick={openDebtList}>
-          <span><HandCoins size={18}/> Debt / Utang</span>
-          <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
-          <small>{formatDebtMoney(debtRemainingOwe)} I owe · {formatDebtMoney(debtRemainingOwed)} owed to me</small>
-        </button>
-
       )}
+      <button className="debt-home-summary card" onClick={openDebtList}>
+        <span><HandCoins size={18}/> Debt / Utang</span>
+        <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
+        <small>{formatDebtMoney(debtRemainingOwe)} I owe · {formatDebtMoney(debtRemainingOwed)} owed to me</small>
+      </button>
+
       <section className="hero">
         <h1>{greeting}, {name}</h1>
         <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
