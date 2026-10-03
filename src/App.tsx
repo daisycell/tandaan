@@ -1218,6 +1218,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
           homeMode={false}
           onSeeAll={openDebtList}
+          onHome={closeDebt}
         />
       ) : listPage !== 'home' ? (
         <section className="full-page card">
