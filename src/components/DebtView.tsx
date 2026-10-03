@@ -62,8 +62,6 @@ export default function DebtView(p: Props) {
           <input value={p.person} onChange={e=>p.setPerson(e.target.value)} placeholder="Person name"/>
           <input inputMode="decimal" value={p.amount} onChange={e=>p.setAmount(e.target.value)} placeholder="Amount (₱)"/>
           <input value={p.description} onChange={e=>p.setDescription(e.target.value)} placeholder="What is it for? (optional)"/>
-          <input type="date" value={p.dueDate} onChange={e=>p.setDueDate(e.target.value)}/>
-          <label className="debt-reminder-toggle"><input type="checkbox" checked={p.reminder} onChange={e=>p.setReminder(e.target.checked)}/> Remind me</label>
           <button className="primary full" onClick={p.onAdd} disabled={!p.person.trim() || !p.amount.trim()}><Check size={16}/> Add debt</button>
         </div>}
       </div>

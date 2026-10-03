@@ -123,6 +123,138 @@ function shortUnit(unit?: string | null) {
     }
   }
 
+type DueDateModalProps = {
+  title: string
+  subtitle: string
+  dueDate: string
+  dueTime: string
+  dueDatePreset: 'today' | 'tomorrow' | 'custom'
+  dueDateMin: string
+  dueReminderOption: ReminderOptionId
+  dueCustomAmount: string
+  dueCustomUnit: ReminderUnit
+  dueCustomError: string | null
+  dueTimeRef: { current: HTMLInputElement | null }
+  onClose: () => void
+  onChooseDuePreset: (preset: 'today' | 'tomorrow' | 'custom') => void
+  onDueDateChange: (value: string) => void
+  onDueTimeChange: (value: string) => void
+  onReminderChange: (value: ReminderOptionId) => void
+  onCustomAmountChange: (value: string) => void
+  onCustomUnitChange: (value: ReminderUnit) => void
+  onSave: (mode: 'dated' | 'none') => void
+  saveLabel: string
+}
+
+function DueDateModal(p: DueDateModalProps) {
+  return (
+    <div className="modal-backdrop">
+      <div className="modal card">
+        <div className="modal-header"><div><strong>{p.title}</strong><div className="modal-subtitle">{p.subtitle}</div></div><button className="icon-btn" onClick={p.onClose} aria-label="Close"><X /></button></div>
+        {/* Single screen: pick a date, optionally a time, then save. No second screen, so nothing has to be navigated. */}
+        <div className="due-compact">
+          <span className="due-compact-label">Date</span>
+          <div className="due-choice-row">
+            <button type="button" className={p.dueDatePreset === 'today' ? 'due-choice active' : 'due-choice'} aria-pressed={p.dueDatePreset === 'today'} onClick={() => p.onChooseDuePreset('today')}>Today</button>
+            <button type="button" className={p.dueDatePreset === 'tomorrow' ? 'due-choice active' : 'due-choice'} aria-pressed={p.dueDatePreset === 'tomorrow'} onClick={() => p.onChooseDuePreset('tomorrow')}>Tomorrow</button>
+          </div>
+
+          <div className="due-choice-row single">
+            <button type="button" className={p.dueDatePreset === 'custom' ? 'due-choice active' : 'due-choice'} aria-pressed={p.dueDatePreset === 'custom'} onClick={() => p.onChooseDuePreset('custom')}>Choose date</button>
+          </div>
+          {p.dueDatePreset === 'custom' && (
+            <input
+              className="due-date-input"
+              type="date"
+              aria-label="Due date"
+              min={p.dueDateMin}
+              value={p.dueDate}
+              onChange={e => p.onDueDateChange(e.target.value)}
+            />
+          )}
+
+          <span className="due-compact-label">Time</span>
+          <div className="due-time-wrap">
+            <button type="button" className={!p.dueTime ? 'due-choice active' : 'due-choice'} onClick={() => { p.onDueTimeChange('') }}>No time</button>
+            <div
+              className={p.dueTime ? 'due-choice-cell active' : 'due-choice-cell'}
+              role="button"
+              tabIndex={0}
+              aria-label={p.dueTime ? 'Change due time' : 'Set due time'}
+              onClick={() => {
+                const input = p.dueTimeRef.current
+                if (!input) return
+                try {
+                  if (typeof input.showPicker === 'function') input.showPicker()
+                  else input.click()
+                } catch {
+                  input.click()
+                }
+              }}
+              onKeyDown={e => {
+                if (e.key !== 'Enter' && e.key !== ' ') return
+                e.preventDefault()
+                const input = p.dueTimeRef.current
+                if (!input) return
+                try {
+                  if (typeof input.showPicker === 'function') input.showPicker()
+                  else input.click()
+                } catch {
+                  input.click()
+                }
+              }}
+            >
+              <span className="due-choice-label">{p.dueTime || 'Set time'}</span>
+              <input
+                ref={p.dueTimeRef}
+                className="due-time-input-overlay"
+                style={{ pointerEvents: 'none' }}
+                type="time"
+                value={p.dueTime}
+                aria-label="Due time"
+                onChange={e => p.onDueTimeChange(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="reminder-block">
+            <span className="due-compact-label">Remind me</span>
+            <div className="reminder-chips">
+              {REMINDER_OPTIONS.map(option => (
+                <button key={option.id} type="button" className={p.dueReminderOption === option.id ? 'reminder-chip active' : 'reminder-chip'} aria-pressed={p.dueReminderOption === option.id} onClick={() => p.onReminderChange(option.id)}>{option.label}</button>
+              ))}
+            </div>
+            {p.dueReminderOption === 'custom' && (
+              <div className="reminder-custom">
+                <input
+                  className="reminder-custom-amount"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  step={1}
+                  aria-label="Custom reminder amount"
+                  placeholder="30"
+                  value={p.dueCustomAmount}
+                  onChange={e => p.onCustomAmountChange(e.target.value)}
+                />
+                <select className="reminder-custom-unit" aria-label="Custom reminder unit" value={p.dueCustomUnit} onChange={e => p.onCustomUnitChange(e.target.value as ReminderUnit)}>
+                  {REMINDER_UNITS.map(unit => <option key={unit.id} value={unit.id}>{unit.label}</option>)}
+                </select>
+              </div>
+            )}
+            {p.dueCustomError && <p className="reminder-error" role="alert">{p.dueCustomError}</p>}
+          </div>
+
+          <div className="modal-actions">
+            <button className="primary full" disabled={!p.dueDate} onClick={() => p.onSave('dated')}>{p.saveLabel}</button>
+            <button className="text-btn full" onClick={() => p.onSave('none')}>No due date</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [name, setName] = useState('')
   const [draftName, setDraftName] = useState('')
@@ -184,7 +316,7 @@ export default function App() {
   const [savingAmbiguity, setSavingAmbiguity] = useState(false)
   const [ambiguityDraftLines, setAmbiguityDraftLines] = useState<ParsedLine[]>([])
 
-  const [duePrompt, setDuePrompt] = useState<{ title: string } | null>(null)
+  const [duePrompt, setDuePrompt] = useState<{ title: string; kind: 'task' | 'debt' } | null>(null)
   const [dueDate, setDueDate] = useState('')
   const [dueTime, setDueTime] = useState('')
   const [dueReminderOption, setDueReminderOption] = useState<ReminderOptionId>('1d')
@@ -783,17 +915,14 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   function openDebtList() { setDebtPage('list'); setSelectedDebtId(null) }
   function openDebtDetail(id: string) { setSelectedDebtId(id); setDebtPage('detail'); setPaymentAmount(''); setPaymentNote('') }
 
-  async function addDebt() {
+  function addDebt() {
     const person = debtPerson.trim()
     const amountCents = parseAmountToCents(debtAmount)
     if (!person || amountCents == null) return
-    const now = new Date().toISOString()
-    const dueDate = debtDueDate || null
-    const reminderAt = debtReminder && dueDate ? new Date(`${dueDate}T09:00:00`).toISOString() : null
-    const debt: Debt = { id: newId(), direction: debtDirection, personName: person, description: debtDescription.trim() || null, originalAmountCents: amountCents, dueDate, reminderEnabled: Boolean(debtReminder && dueDate), reminderMinutesBefore: debtReminder && dueDate ? 1440 : null, reminderAt, reminderSentAt: null, payments: [], notes: null, createdAt: now, updatedAt: now }
-    await persistDebt(debt, 'Debt added')
-    setDebtPerson(''); setDebtAmount(''); setDebtDescription(''); setDebtDueDate(''); setDebtReminder(true); setDebtAddOpen(false)
+    resetDueForm()
+    setDuePrompt({ title: person, kind: 'debt' })
   }
+
 
   async function addDebtPayment(debt: Debt) {
     const amountCents = parseAmountToCents(paymentAmount)
@@ -869,7 +998,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     const title = directTaskTitle.trim()
     if (!title) return
     resetDueForm()
-    setDuePrompt({ title })
+    setDuePrompt({ title, kind: 'task' })
   }
 
   /** Returns every due-modal field to its opening state. */
@@ -922,7 +1051,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         const task = taskWithReminder(title, parsed.dueDate, parsed.dueTime ?? null)
         await persistTask(task, 'Task saved')
       } else {
-        setDuePrompt({ title })
+        setDuePrompt({ title, kind: 'task' })
         resetDueForm()
       }
       return true
@@ -959,11 +1088,8 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   // reminder here never touches the phone's push subscription.
   async function saveDueChoice(mode: 'dated' | 'none') {
     if (!duePrompt) return
-    const title = duePrompt.title
+    const prompt = duePrompt
 
-    // Validate before anything is written. A rejected custom value leaves the
-    // modal open and the typed title intact, so the user can correct it rather
-    // than lose the task.
     let customMinutes: number | null = null
     if (mode === 'dated' && dueReminderOption === 'custom') {
       const problem = validateCustomReminder(Number(dueCustomAmount), dueCustomUnit)
@@ -975,22 +1101,50 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       setDueCustomError(null)
     }
 
-    if (mode === 'none') {
-      const task = taskWithReminder(title, null, null)
-      await persistTask(task, 'Task saved')
+    if (prompt.kind === 'task') {
+      if (mode === 'none') {
+        const task = taskWithReminder(prompt.title, null, null)
+        await persistTask(task, 'Task saved')
+      } else {
+        const nextDate = dueDate || null
+        const nextTime = nextDate && dueTime ? dueTime : null
+        if (!nextDate) return
+        const task = taskWithReminder(prompt.title, nextDate, nextTime, dueReminderOption, customMinutes)
+        await persistTask(task, 'Task saved')
+      }
+      setDirectTaskTitle('')
+      setExpandedAdd(null)
     } else {
-      const nextDate = dueDate || null
+      const nextDate = mode === 'none' ? null : (dueDate || null)
       const nextTime = nextDate && dueTime ? dueTime : null
-      if (!nextDate) return
-      const task = taskWithReminder(title, nextDate, nextTime, dueReminderOption, customMinutes)
-      await persistTask(task, 'Task saved')
+      const reminder = resolveReminder(nextDate, nextTime, dueReminderOption, customMinutes)
+      const debt: Debt = {
+        id: newId(),
+        direction: debtDirection,
+        personName: prompt.title,
+        description: debtDescription.trim() || null,
+        originalAmountCents: parseAmountToCents(debtAmount)!,
+        dueDate: nextDate,
+        reminderEnabled: reminder.enabled,
+        reminderMinutesBefore: reminder.minutesBefore,
+        reminderAt: reminder.reminderAt,
+        reminderSentAt: null,
+        payments: [],
+        notes: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+      await persistDebt(debt, 'Debt added')
+      setDebtPerson('')
+      setDebtAmount('')
+      setDebtDescription('')
+      setDebtAddOpen(false)
     }
 
     setDuePrompt(null)
     resetDueForm()
-    setDirectTaskTitle('')
-    setExpandedAdd(null)
   }
+
 
   function startEditTask(task: Task) {
     setEditingTask(task)
@@ -1651,124 +1805,32 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       )}
 
       {duePrompt && (
-        <div className="modal-backdrop">
-          <div className="modal card">
-            <div className="modal-header"><div><strong>When is this due?</strong><div className="modal-subtitle">{duePrompt.title}</div></div><button className="icon-btn" onClick={() => setDuePrompt(null)}><X /></button></div>
-            {/* Single screen: pick a date, optionally a time, then save. No second screen, so nothing has to be navigated. */}
-            <div className="due-compact">
-              <span className="due-compact-label">Date</span>
-              <div className="due-choice-row">
-                <button type="button" className={dueDatePreset === 'today' ? 'due-choice active' : 'due-choice'} aria-pressed={dueDatePreset === 'today'} onClick={() => chooseDuePreset('today')}>Today</button>
-                <button type="button" className={dueDatePreset === 'tomorrow' ? 'due-choice active' : 'due-choice'} aria-pressed={dueDatePreset === 'tomorrow'} onClick={() => chooseDuePreset('tomorrow')}>Tomorrow</button>
-              </div>
-
-              {/* Custom date. The native input carries the same floor as the
-                  presets, so the OS picker greys out yesterday (and, with
-                  Tomorrow active, today) instead of relying on save-time checks. */}
-              <div className="due-choice-row single">
-                <button type="button" className={dueDatePreset === 'custom' ? 'due-choice active' : 'due-choice'} aria-pressed={dueDatePreset === 'custom'} onClick={() => chooseDuePreset('custom')}>Choose date</button>
-              </div>
-              {dueDatePreset === 'custom' && (
-                <input
-                  className="due-date-input"
-                  type="date"
-                  aria-label="Due date"
-                  min={dueDateMin}
-                  value={dueDate}
-                  onChange={e => {
-                    const picked = e.target.value
-                    // min on the control stops most of this, but a value can still
-                    // arrive from typing or from a date that has since passed.
-                    if (picked && !isDueDateAllowed(picked, dueDateMin)) { setDueDate(dueDateMin); return }
-                    setDueDate(picked)
-                  }}
-                />
-              )}
-
-              <span className="due-compact-label">Time</span>
-              <div className="due-time-wrap">
-                <button type="button" className={!dueTime ? 'due-choice active' : 'due-choice'} onClick={() => { setDueTime(''); if (!dueReminderTouched) setDueReminderOption(defaultReminderOption('')) }}>No time</button>
-                {/* The native time input stays mounted and transparent on top of the
-                    "Set time" cell, reusing the existing overlay pattern, so tapping
-                    it opens the real OS picker on iOS. */}
-                <div
-                  className={dueTime ? 'due-choice-cell active' : 'due-choice-cell'}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={dueTime ? 'Change due time' : 'Set due time'}
-                  onClick={() => {
-                    const input = dueTimeRef.current
-                    if (!input) return
-                    try {
-                      if (typeof input.showPicker === 'function') input.showPicker()
-                      else input.click()
-                    } catch {
-                      input.click()
-                    }
-                  }}
-                  onKeyDown={e => {
-                    if (e.key !== 'Enter' && e.key !== ' ') return
-                    e.preventDefault()
-                    const input = dueTimeRef.current
-                    if (!input) return
-                    try {
-                      if (typeof input.showPicker === 'function') input.showPicker()
-                      else input.click()
-                    } catch {
-                      input.click()
-                    }
-                  }}
-                >
-                  <span className="due-choice-label">{dueTime || 'Set time'}</span>
-                  <input
-                    ref={dueTimeRef}
-                    className="due-time-input-overlay"
-                    style={{ pointerEvents: 'none' }}
-                    type="time"
-                    value={dueTime}
-                    aria-label="Due time"
-                    onChange={e => { setDueTime(e.target.value); if (!dueReminderTouched) setDueReminderOption(defaultReminderOption(e.target.value)) }}
-                  />
-                </div>
-              </div>
-
-              <div className="reminder-block">
-                <span className="due-compact-label">Remind me</span>
-                <div className="reminder-chips">
-                  {REMINDER_OPTIONS.map(option => (
-                    <button key={option.id} type="button" className={dueReminderOption === option.id ? 'reminder-chip active' : 'reminder-chip'} aria-pressed={dueReminderOption === option.id} onClick={() => { setDueReminderTouched(true); setDueReminderOption(option.id); if (option.id !== 'custom') setDueCustomError(null) }}>{option.label}</button>
-                  ))}
-                </div>
-                {dueReminderOption === 'custom' && (
-                  <div className="reminder-custom">
-                    <input
-                      className="reminder-custom-amount"
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      step={1}
-                      aria-label="Custom reminder amount"
-                      placeholder="30"
-                      value={dueCustomAmount}
-                      onChange={e => { setDueCustomAmount(e.target.value); setDueCustomError(null) }}
-                    />
-                    <select className="reminder-custom-unit" aria-label="Custom reminder unit" value={dueCustomUnit} onChange={e => { setDueCustomUnit(e.target.value as ReminderUnit); setDueCustomError(null) }}>
-                      {REMINDER_UNITS.map(unit => <option key={unit.id} value={unit.id}>{unit.label}</option>)}
-                    </select>
-                  </div>
-                )}
-                {dueCustomError && <p className="reminder-error" role="alert">{dueCustomError}</p>}
-              </div>
-
-              <div className="modal-actions">
-                <button className="primary full" disabled={!dueDate} onClick={() => void saveDueChoice('dated')}>Save task</button>
-                <button className="text-btn full" onClick={() => void saveDueChoice('none')}>No due date</button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DueDateModal
+          title={duePrompt.kind === 'debt' ? 'When is this payment due?' : 'When is this due?'}
+          subtitle={duePrompt.title}
+          dueDate={dueDate}
+          dueTime={dueTime}
+          dueDatePreset={dueDatePreset}
+          dueDateMin={dueDateMin}
+          dueReminderOption={dueReminderOption}
+          dueCustomAmount={dueCustomAmount}
+          dueCustomUnit={dueCustomUnit}
+          dueCustomError={dueCustomError}
+          dueTimeRef={dueTimeRef}
+          onClose={() => { if (duePrompt.kind === 'debt') void saveDueChoice('none'); else setDuePrompt(null) }}
+          onChooseDuePreset={chooseDuePreset}
+          onDueDateChange={value => {
+            if (value && !isDueDateAllowed(value, dueDateMin)) { setDueDate(dueDateMin); return }
+            setDueDate(value)
+          }}
+          onDueTimeChange={value => { setDueTime(value); if (!dueReminderTouched) setDueReminderOption(defaultReminderOption(value)) }}
+          onReminderChange={value => { setDueReminderTouched(true); setDueReminderOption(value); if (value !== 'custom') setDueCustomError(null) }}
+          onCustomAmountChange={value => { setDueCustomAmount(value); setDueCustomError(null) }}
+          onCustomUnitChange={value => { setDueCustomUnit(value); setDueCustomError(null) }}
+          onSave={mode => void saveDueChoice(mode)}
+          saveLabel={duePrompt.kind === 'debt' ? 'Save debt' : 'Save task'}
+        />
       )}
-
 
       {settingsOpen && (
         <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setSettingsOpen(false) }}>
