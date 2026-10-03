@@ -4,6 +4,7 @@ import { debtStatus, formatDebtMoney, paidPercent, remainingCents, sortDebtPayme
 
 type Props = {
   debts: Debt[]
+  allDebts: Debt[]
   filter: 'all' | 'owe' | 'owed_to_me' | 'overdue' | 'paid'
   search: string
   addOpen: boolean
@@ -81,7 +82,7 @@ export default function DebtView(p: Props) {
 
   return <section className="debt-page card">
     <div className="debt-page-head"><div><h2>Debt / Utang</h2><p>Keep balances and payments in one place.</p></div><button className="primary" onClick={()=>p.setAddOpen(!p.addOpen)}><Plus size={16}/> Add debt</button></div>
-    <div className="debt-summary-strip"><div><span>I owe</span><strong>{formatDebtMoney(p.debts.filter(d=>d.direction==='owe').reduce((s,d)=>s+remainingCents(d),0))}</strong></div><div><span>Owed to me</span><strong>{formatDebtMoney(p.debts.filter(d=>d.direction==='owed_to_me').reduce((s,d)=>s+remainingCents(d),0))}</strong></div></div>
+    <div className="debt-summary-strip"><div><span>I owe</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owe').reduce((s,d)=>s+remainingCents(d),0))}</strong></div><div><span>Owed to me</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owed_to_me').reduce((s,d)=>s+remainingCents(d),0))}</strong></div></div>
     {p.addOpen && <div className="debt-form">
       <div className="filter-tabs"><button className={p.direction==='owe'?'filter-tab active':'filter-tab'} onClick={()=>p.setDirection('owe')}>I owe</button><button className={p.direction==='owed_to_me'?'filter-tab active':'filter-tab'} onClick={()=>p.setDirection('owed_to_me')}>Owed to me</button></div>
       <input value={p.person} onChange={e=>p.setPerson(e.target.value)} placeholder="Person name"/>
