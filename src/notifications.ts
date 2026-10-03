@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { getSignInError, getUserId } from './sync'
+import { getUserId } from './sync'
 
 /**
  * Push activation can stall at any await in the chain, and a stalled await never
@@ -71,23 +71,18 @@ export function pushSupported() {
 /**
  * Explains an auth failure using the reason that actually caused it.
  *
- * A failed CAPTCHA is a configuration or challenge problem, not a mystery, so
- * the real message is kept instead of being flattened into "could not sign you
- * in". getSignInError() is the existing channel sync.ts already uses to surface
- * the CAPTCHA error, so no second error store is introduced.
+ * sync.ts rethrows Supabase's own error rather than swallowing it, so the real
+ * message is kept instead of being flattened into "could not sign you in".
  */
 function authFailureMessage(error: unknown): string {
-  const captcha = getSignInError()
-  if (captcha?.message) return captcha.message
   const message = error instanceof Error ? error.message : ''
-  if (/captcha|turnstile/i.test(message)) return message
   if (message) return `Tandaan could not sign you in on this device: ${message}`
   return 'Tandaan could not sign you in on this device.'
 }
 
 /**
  * Reads the current session without ever attempting to create one.
- * Returns null when there is no session, and never triggers a CAPTCHA.
+ * Returns null when there is no session, and never starts a sign-in.
  */
 async function existingSessionUserId(): Promise<string | null> {
   const sb = supabase
@@ -100,7 +95,7 @@ async function existingSessionUserId(): Promise<string | null> {
  * Resolves the user id for registration, preferring an existing session.
  *
  * An already-authenticated device must not be pushed back through anonymous
- * sign-in, because that costs a fresh CAPTCHA and is the step that was failing.
+ * sign-in, which is a needless round trip and the step that was failing.
  * Only when no session exists is the existing Tandaan auth path used, once, and
  * the session is then verified rather than trusted.
  */
@@ -123,15 +118,14 @@ async function resolveUserId(): Promise<string> {
   }
 
   // One pass through the existing path in sync.ts, which performs anonymous
-  // sign-in behind the CAPTCHA. It rethrows its own error, so that error is the
-  // real reason and is carried through rather than replaced.
+  // sign-in. It rethrows its own error, so that error is the real reason and is
+  // carried through rather than replaced.
   //
   // Deliberately NOT wrapped in withTimeout(). This call owns the auth timeout
-  // itself: the CAPTCHA lifecycle timer inside requestCaptchaToken() already
-  // bounds it, and it starts LATER than a timer here would, so an equally long
-  // stage timer on the outside always preempted it and replaced the specific
-  // reason with a generic "Timed out after 15s waiting for auth". Two competing
-  // 15s timers on one stage is what made the failure unreadable.
+  // itself, via withSignInTimeout() inside sync.ts. An equally long stage timer
+  // here would compete with it on the outside and always preempted it, replacing
+  // the specific reason with a generic "Timed out after 15s waiting for auth".
+  // Two competing 15s timers on one stage is what made the failure unreadable.
   let userId: string | null = null
   try {
     diagnose('auth', 'get-user')
@@ -192,9 +186,9 @@ export async function enablePushNotifications() {
   }
   diagnose('permission', 'ok', 'granted')
 
-  // getUserId() can reach the anonymous sign-in path, which waits on a CAPTCHA
-  // that is not guaranteed to resolve. Bounded here so a dead challenge shows
-  // an error instead of pinning the toggle in its busy state.
+  // getUserId() can reach the anonymous sign-in path, which is a network call that
+  // is not guaranteed to resolve. Bounded there so a failed sign-in shows an
+  // error instead of pinning the toggle in its busy state.
   const userId = await resolveUserId()
 
   let registration: ServiceWorkerRegistration

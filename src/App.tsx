@@ -4,9 +4,8 @@ import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCusto
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { type ParsedInput, type ParsedLine } from './parser'
 import { supabase } from './supabase'
-import { getRemoteProfile, getUserId, syncAll, syncProfile, getSignInError, purgeLocalTombstones, visible, getFlaggedOutboxItems, retryOutboxItem, discardOutboxItem, MAX_RETRIES } from './sync'
+import { getRemoteProfile, getUserId, syncAll, syncProfile, purgeLocalTombstones, visible, getFlaggedOutboxItems, retryOutboxItem, discardOutboxItem, MAX_RETRIES } from './sync'
 import type { OutboxItem } from './db'
-import { TurnstileWidget } from './components/TurnstileWidget'
 import { calculateReminderAt, resolveReminder, defaultReminderOption, toMinutes, validateCustomReminder, clampDueDate, minDueDateForPreset, isDueDateAllowed, REMINDER_OPTIONS, REMINDER_UNITS, type ReminderOptionId, type ReminderUnit } from './reminders'
 import { disablePushNotifications, enablePushNotifications, getPushSubscription, PushStageError, pushSupported } from './notifications'
 import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
@@ -222,7 +221,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
    const [remindersMessageIsError, setRemindersMessageIsError] = useState(false)
    const remindersToggleRef = useRef<HTMLDivElement | null>(null)
    const focusRemindersRef = useRef(false)
-   const signInError = getSignInError()
 
    useEffect(() => {
     let cancelled = false
@@ -520,7 +518,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         case 'config':
           return 'Phone reminders are not set up on this build yet.'
         case 'auth':
-          // The auth stage now carries the real reason (CAPTCHA, network,
+          // The auth stage now carries the real reason (network,
           // sign-in rejected), so it is shown rather than a generic failure.
           return error.message
         case 'service-worker':
@@ -1338,7 +1336,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           ))}
         </div></div>
       )}
-      <TurnstileWidget />
     </main>
   )
 }
