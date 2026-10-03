@@ -40,7 +40,7 @@ function logStage(stage: string, outcome: 'ok' | 'failed' | 'start', detail?: st
   console.warn(`[reminders] stage=${stage} ${outcome}${d}`)
 }
 
-export default async function handler(req: Request) {
+export async function POST(req: Request) {
   const start = Date.now()
   try {
     logStage('request', 'start')
