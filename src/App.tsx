@@ -12,6 +12,7 @@ import { TandaanLogo } from './components/TandaanLogo'
 import type { Debt, DebtPayment, Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
+import DebtView from './components/DebtView'
 import { debtStatus, formatDebtMoney, makeDebtPayment, paidPercent, parseAmountToCents, remainingCents, sortDebtPayments, totalPaidCents } from './debt'
 
 function newId() {
@@ -1014,6 +1015,44 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           <button className="icon-btn" onClick={() => openSettings()} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
         </div>
       </header>
+
+      <DebtView
+        debts={filteredDebts}
+        filter={debtFilter}
+        search={debtSearch}
+        addOpen={debtAddOpen}
+        direction={debtDirection}
+        person={debtPerson}
+        amount={debtAmount}
+        description={debtDescription}
+        dueDate={debtDueDate}
+        reminder={debtReminder}
+        selected={selectedDebt}
+        paymentAmount={paymentAmount}
+        paymentNote={paymentNote}
+        setFilter={setDebtFilter}
+        setSearch={setDebtSearch}
+        setAddOpen={setDebtAddOpen}
+        setDirection={setDebtDirection}
+        setPerson={setDebtPerson}
+        setAmount={setDebtAmount}
+        setDescription={setDebtDescription}
+        setDueDate={setDebtDueDate}
+        setReminder={setDebtReminder}
+        setPaymentAmount={setPaymentAmount}
+        setPaymentNote={setPaymentNote}
+        onAdd={() => void addDebt()}
+        onOpen={openDebtDetail}
+        onBack={openDebtList}
+        onPayment={() => selectedDebt && void addDebtPayment(selectedDebt)}
+        onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
+        onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
+      />
+      <button className="debt-home-summary card" onClick={openDebtList}>
+        <span><HandCoins size={18}/> Debt / Utang</span>
+        <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
+        <small>{formatDebtMoney(debtRemainingOwe)} I owe · {formatDebtMoney(debtRemainingOwed)} owed to me</small>
+      </button>
 
       <section className="hero">
         <h1>{greeting}, {name}</h1>
