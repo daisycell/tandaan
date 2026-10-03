@@ -36,6 +36,7 @@ type Props = {
   onDelete: () => void
   homeMode?: boolean
   onSeeAll?: () => void
+  onHome?: () => void
 }
 
 function statusLabel(status: ReturnType<typeof debtStatus>) {
@@ -114,7 +115,10 @@ export default function DebtView(p: Props) {
   }
 
   return <section className="debt-page card">
-    <div className="debt-page-head"><div><h2>Debt</h2><p>Keep balances and payments in one place.</p></div><button className="primary" onClick={()=>p.setAddOpen(!p.addOpen)}><Plus size={16}/> Add debt</button></div>
+    <div className="debt-page-head">
+      <div className="debt-list-title"><button className="icon-btn list-back-btn" onClick={p.onHome} aria-label="Back to Home" title="Back to Home"><ArrowLeft size={18}/></button><div><h2>Debt</h2><p>Keep balances and payments in one place.</p></div></div>
+      <button className="primary" onClick={()=>p.setAddOpen(!p.addOpen)}><Plus size={16}/> Add debt</button>
+    </div>
     <div className="debt-summary-strip"><div><span>I owe</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owe').reduce((s,d)=>s+remainingCents(d),0))}</strong></div><div><span>Owed to me</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owed_to_me').reduce((s,d)=>s+remainingCents(d),0))}</strong></div></div>
     {p.addOpen && <div className="debt-form">
       <div className="filter-tabs"><button className={p.direction==='owe'?'filter-tab active':'filter-tab'} onClick={()=>p.setDirection('owe')}>I owe</button><button className={p.direction==='owed_to_me'?'filter-tab active':'filter-tab'} onClick={()=>p.setDirection('owed_to_me')}>Owed to me</button></div>
