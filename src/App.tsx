@@ -1216,6 +1216,8 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           onPayment={() => selectedDebt && void addDebtPayment(selectedDebt)}
           onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
           onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
+          homeMode={false}
+          onSeeAll={openDebtList}
         />
       ) : listPage !== 'home' ? (
         <section className="full-page card">
@@ -1428,47 +1430,139 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         </section>
       ) : (
         <>
-          <section className="hero">
-            <h1>{greeting}, {name}</h1>
-            <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
-            <div className="summary-grid">
-              <div className="summary-card card">
-                <span>Today</span>
-                <strong>{todayCount}</strong>
-                <div className="summary-preview-list">
-                  {taskPreview.length === 0 ? <small>No tasks today</small> : taskPreview.map(task => <span key={task.id} className="summary-preview-item">{task.title}</span>)}
+          <section className="section-block">
+            <div className="section-heading"><h2>Today</h2><span>{todayCount} open</span></div>
+            <div className="direct-add">
+              <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'task' ? null : 'task')} aria-expanded={expandedAdd === 'task'} aria-label="Add a task">
+                <span>Add a task</span><Plus size={17} />
+              </button>
+              {expandedAdd === 'task' && (
+                <div className="direct-add-fields direct-add-task-fields">
+                  <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Task title" aria-label="Task title" autoFocus />
+                  <button className="direct-add-btn" onClick={() => void addTaskDirect()} disabled={!directTaskTitle.trim()} aria-label="Save task"><Check size={17} /></button>
                 </div>
-                <button className="summary-see-all" onClick={() => openListPage('tasks')}>See all</button>
-                {displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}
-              </div>
-              <div className="summary-card card">
-                <span>Shopping</span>
-                <strong>{liveShopping.filter(i => !i.isPurchased).length}</strong>
-                <div className="summary-preview-list">
-                  {shoppingPreview.length === 0 ? <small>Nothing to buy</small> : shoppingPreview.map(item => <span key={item.id} className="summary-preview-item">{item.name}</span>)}
-                </div>
-                <button className="summary-see-all" onClick={() => openListPage('shopping')}>See all</button>
-                {displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}
-              </div>
-              <div className="summary-card card">
-                <span>Purchases</span>
-                <strong>{money(purchaseTotal)}</strong>
-                <div className="summary-preview-list">
-                  {purchasePreview.length === 0 ? <small>No purchases yet</small> : purchasePreview.map(item => <span key={item.id} className="summary-preview-item">{item.itemName}</span>)}
-                </div>
-                <button className="summary-see-all" onClick={() => openListPage('purchases')}>See all</button>
-                {displayThemeStickers[2] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}
-              </div>
-              <div className="summary-card card">
-                <span>Debt</span>
-                <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
-                <div className="summary-preview-list">
-                  {debtPreview.length === 0 ? <small>No active debts</small> : debtPreview.map(debt => <span key={debt.id} className="summary-preview-item">{debt.personName} · {formatDebtMoney(remainingCents(debt))}</span>)}
-                </div>
-                <button className="summary-see-all" onClick={openDebtList}>See all</button>
-                {displayThemeStickers[0] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}
-              </div>
+              )}
             </div>
+            <div className="task-list">
+              {todayTasks.length === 0 && <div className="empty card list-empty"><Check size={22} /><span>You are all caught up.</span></div>}
+              {todayTasks.slice(0, 3).map(task => (
+                <SwipeToDelete key={task.id} onDelete={() => void deleteTask(task)}>
+                  <div className="task-card card">
+                    <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
+                    <div className="task-main">
+                      <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
+                      {task.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</div>}
+                    </div>
+                    <div className="task-actions">
+                      {!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}
+                      <button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button>
+                    </div>
+                  </div>
+                </SwipeToDelete>
+              ))}
+            </div>
+            {todayTasks.length > 3 && <button className="summary-see-all section-see-all" onClick={() => openListPage('tasks')}>See all</button>}
+          </section>
+
+          <section className="section-block">
+            <div className="section-heading"><h2>Shopping</h2><span>{liveShopping.filter(i => !i.isPurchased).length} remaining</span></div>
+            <div className="direct-add">
+              <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'shopping' ? null : 'shopping')} aria-expanded={expandedAdd === 'shopping'} aria-label="Add a shopping item">
+                <span>Add an item</span><Plus size={17} /></button>
+              {expandedAdd === 'shopping' && (
+                <div className="direct-add-fields">
+                  <input className="grow" value={directShopName} onChange={e => setDirectShopName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Item" aria-label="Shopping item" autoFocus />
+                  <input className="num" type="number" min="0" step="any" value={directShopQty} onChange={e => setDirectShopQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
+                  <input className="unit" value={directShopUnit} onChange={e => setDirectShopUnit(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Unit" aria-label="Unit" />
+                  <button className="direct-add-btn" onClick={() => void addShoppingDirect()} disabled={!directShopName.trim()} aria-label="Save shopping item"><Check size={17} /></button>
+                </div>
+              )}
+            </div>
+            <div className="task-list">
+              {liveShopping.length === 0 && <div className="empty card list-empty"><ShoppingCart size={22} /><span>No shopping items yet.</span></div>}
+              {liveShopping.slice(0, 3).map(item => (
+                <SwipeToDelete key={item.id} onDelete={() => void deleteShopping(item)}>
+                  <div className="task-card card">
+                    <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
+                    <div className="task-main">
+                      <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
+                      {(item.quantity != null || item.unit || item.expectedPrice != null) && <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</div>}
+                    </div>
+                    <div className="task-actions"><button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button></div>
+                  </div>
+                </SwipeToDelete>
+              ))}
+            </div>
+            {liveShopping.length > 3 && <button className="summary-see-all section-see-all" onClick={() => openListPage('shopping')}>See all</button>}
+          </section>
+
+          <DebtView
+            debts={filteredDebts}
+            allDebts={liveDebts}
+            filter={debtFilter}
+            search={debtSearch}
+            addOpen={debtAddOpen}
+            direction={debtDirection}
+            person={debtPerson}
+            amount={debtAmount}
+            description={debtDescription}
+            dueDate={debtDueDate}
+            reminder={debtReminder}
+            selected={null}
+            paymentAmount={paymentAmount}
+            paymentNote={paymentNote}
+            setFilter={setDebtFilter}
+            setSearch={setDebtSearch}
+            setAddOpen={setDebtAddOpen}
+            setDirection={setDebtDirection}
+            setPerson={setDebtPerson}
+            setAmount={setDebtAmount}
+            setDescription={setDebtDescription}
+            setDueDate={setDebtDueDate}
+            setReminder={setDebtReminder}
+            setPaymentAmount={setPaymentAmount}
+            setPaymentNote={setPaymentNote}
+            onAdd={() => void addDebt()}
+            onOpen={openDebtDetail}
+            onBack={openDebtList}
+            onPayment={() => selectedDebt && void addDebtPayment(selectedDebt)}
+            onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
+            onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
+            homeMode={true}
+            onSeeAll={openDebtList}
+          />
+
+          <section className="section-block">
+            <div className="section-heading"><h2>Purchases</h2><span>{purchases.length} recorded</span></div>
+            <div className="direct-add">
+              <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'purchase' ? null : 'purchase')} aria-expanded={expandedAdd === 'purchase'} aria-label="Add a purchase">
+                <span>Add a purchase</span><Plus size={17} /></button>
+              {expandedAdd === 'purchase' && (
+                <div className="direct-add-fields">
+                  <input className="grow" value={directPurchaseName} onChange={e => setDirectPurchaseName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Item" aria-label="Purchase item" autoFocus />
+                  <input className="num" type="number" min="0" step="any" value={directPurchaseQty} onChange={e => setDirectPurchaseQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
+                  <input className="unit" value={directPurchaseUnit} onChange={e => setDirectPurchaseUnit(e.target.value)} placeholder="Unit" aria-label="Unit" />
+                  <input className="num price" type="number" min="0" step="0.01" value={directPurchasePrice} onChange={e => setDirectPurchasePrice(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Price" aria-label="Price" />
+                  <button className="direct-add-btn" onClick={() => void addPurchaseDirect()} disabled={!directPurchaseName.trim()} aria-label="Save purchase"><Check size={17} /></button>
+                </div>
+              )}
+            </div>
+            <div className="task-list">
+              {livePurchases.length === 0 && <div className="empty card list-empty"><Receipt size={22} /><span>No purchases yet.</span></div>}
+              {livePurchases.slice(0, 3).map(item => (
+                <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
+                  <div className="task-card card">
+                    <div className="purchase-dot">₱</div>
+                    <div className="task-main">
+                      <div className="task-title">{item.itemName}</div>
+                      <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div>
+                    </div>
+                    <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button></div>
+                  </div>
+                </SwipeToDelete>
+              ))}
+            </div>
+            {livePurchases.length > 3 && <button className="summary-see-all section-see-all" onClick={() => openListPage('purchases')}>See all</button>}
           </section>
         </>
       )}
