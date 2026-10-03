@@ -596,8 +596,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .app-shell { width:100%; padding: 10px 10px max(52px, env(safe-area-inset-bottom)); }
   .app-header { gap: 8px; }
   .tandaan-logo { width: 60px; height: 60px; border-radius: 10px; gap: 2px; padding: 2px; box-sizing: border-box; }
-  .tandaan-logo-cell { transform: translateY(-18%); }
-  .tandaan-logo-cell:nth-child(n+3) { transform: translateY(-24%); }
+  .tandaan-logo-cell { transform: none; }
   .brand { font-size:24px; }
   .sync-status { max-width:160px; }
   .header-actions { gap:6px; }
