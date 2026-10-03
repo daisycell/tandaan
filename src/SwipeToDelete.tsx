@@ -4,9 +4,10 @@ import { Trash2 } from 'lucide-react'
 type Props = {
   children: ReactNode
   onDelete: () => void
+  showHint?: boolean
 }
 
-export default function SwipeToDelete({ children, onDelete }: Props) {
+export default function SwipeToDelete({ children, onDelete, showHint = false }: Props) {
   const [offset, setOffset] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [armed, setArmed] = useState(false)
@@ -61,7 +62,11 @@ export default function SwipeToDelete({ children, onDelete }: Props) {
   return (
     <div className="swipe-shell" aria-label="Swipe left to delete">
       <div className={armed ? 'swipe-delete-bg armed' : 'swipe-delete-bg'}>
-        <div className="swipe-delete-hint"><Trash2 size={19} /><span>{armed ? 'Release to delete' : 'Swipe left to delete'}</span></div>
+        <div className="swipe-delete-hint">
+          <Trash2 size={19} />
+          {showHint && <span>{armed ? 'Release to delete' : 'Swipe left to delete'}</span>}
+          {!showHint && armed && <span>Release to delete</span>}
+        </div>
       </div>
       <div
         className={dragging ? 'swipe-content dragging' : 'swipe-content'}
