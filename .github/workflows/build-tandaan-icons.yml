@@ -1,0 +1,76 @@
+name: Build Tandaan app icons
+
+on:
+  push:
+    branches:
+      - fix/pwa-home-screen-logo
+
+permissions:
+  contents: write
+
+jobs:
+  build-icons:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build composite Tandaan icons
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageOps, ImageDraw
+
+          root = Path("public/icons")
+          names = ["logo-d1.png", "logo-d2.png", "logo-d3.png", "logo-d4.png"]
+
+          size = 512
+          cell = 246
+          margin = 8
+          gap = 4
+          bg = (11, 7, 21, 255)
+          stroke = (103, 232, 249, 255)
+
+          canvas = Image.new("RGBA", (size, size), bg)
+
+          positions = [
+              (margin, margin),
+              (margin + cell + gap, margin),
+              (margin, margin + cell + gap),
+              (margin + cell + gap, margin + cell + gap),
+          ]
+
+          for name, (x, y) in zip(names, positions):
+              src = Image.open(root / name).convert("RGBA")
+              contained = ImageOps.contain(src, (cell, cell), Image.Resampling.LANCZOS)
+              px = x + (cell - contained.width) // 2
+              py = y + (cell - contained.height) // 2
+              canvas.alpha_composite(contained, (px, py))
+
+          draw = ImageDraw.Draw(canvas)
+          draw.rounded_rectangle((2, 2, size - 3, size - 3), radius=54, outline=stroke, width=4)
+
+          canvas.save(root / "app-icon-512.png", format="PNG", optimize=True)
+          for out_size in (180, 192):
+              canvas.resize((out_size, out_size), Image.Resampling.LANCZOS).save(
+                  root / f"app-icon-{out_size}.png", format="PNG", optimize=True
+              )
+          PY
+
+      - name: Install Pillow
+        if: false
+        run: python -m pip install pillow
+
+      - name: Install Pillow
+        run: python -m pip install pillow
+
+      - name: Commit generated icons
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/icons/app-icon-180.png public/icons/app-icon-192.png public/icons/app-icon-512.png
+          git diff --cached --quiet || git commit -m "chore: generate Tandaan home screen icons"
+          git push
