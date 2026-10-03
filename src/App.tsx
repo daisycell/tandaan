@@ -909,7 +909,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   if (!name) {
     return (
       <main className="onboarding" style={{ gap: 10 }}>
-        <TandaanLogo size={76} animated />
+        <TandaanLogo size={76} />
         <div className="brand">Tandaan</div>
         <p style={{ margin: '-2px 0 4px' }}>Your offline-first everyday memory.</p>
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
