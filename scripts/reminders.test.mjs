@@ -201,7 +201,9 @@ test('invalid due date yields no reminderAt', () => {
 
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const notifications = readFileSync(new URL('../src/notifications.ts', import.meta.url), 'utf8')
-const widget = readFileSync(new URL('../src/components/TurnstileWidget.tsx', import.meta.url), 'utf8')
+const sync = readFileSync(new URL('../src/sync.ts', import.meta.url), 'utf8')
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const envExample = readFileSync(new URL('../.env.example', import.meta.url), 'utf8')
 
 /** Body of the region between two source markers, so assertions cannot leak into neighbouring functions or comments. */
 function slice(source, from, to) {
@@ -212,7 +214,7 @@ function slice(source, from, to) {
   return source.slice(start, end)
 }
 
-test('12. an existing session short-circuits before CAPTCHA or sign-in', () => {
+test('12. an existing session short-circuits before sign-in', () => {
   const body = slice(notifications, 'async function resolveUserId', 'export async function getPushSubscription')
   const sessionRead = body.indexOf('existingSessionUserId()')
   const getUser = body.indexOf('await getUserId()')
@@ -234,8 +236,8 @@ test('12b. getUserId is reached only when no session was found', () => {
 
 test('12c. only one authoritative auth timeout, and it is not nested around getUserId', () => {
   const body = slice(notifications, 'async function resolveUserId', 'export async function getPushSubscription')
-  // A competing stage timer here would always preempt the CAPTCHA timer, which
-  // starts later, and would replace the real reason with a generic timeout.
+  // A competing stage timer here would preempt the auth timer that owns this
+  // call, and would replace the real reason with a generic timeout.
   // Match the call form so the explanatory comment is not mistaken for code.
   assert.ok(!body.includes(`await withTimeout(`), 'getUserId is not wrapped in a competing stage timer')
   assert.equal((notifications.match(/withTimeout\('/g) || []).length, 6, 'the other push stages keep their own timeouts')
@@ -285,81 +287,68 @@ test('7. a bad custom value blocks the save and keeps the modal open', () => {
   assert.ok(clearing > save.indexOf('await persistTask'), 'title is cleared only after a successful write')
 })
 
-test('13. a failed CAPTCHA rejects instead of hanging', () => {
-  // Every terminal path funnels through the single settlement function.
-  assert.match(widget, /function settlePending\(outcome: 'resolve' \| 'reject'/)
-  for (const [label, pattern] of [
-    ['onSuccess', /function onToken\(token: string\)[\s\S]*?settlePending\('resolve', token\)/],
-    ['onError', /function onWidgetError\(\)[\s\S]*?rejectCurrent\(new Error\('CAPTCHA verification failed/],
-    ['timeout', /retryTimeout = setTimeout\(\(\) => \{[\s\S]*?rejectCurrent\(new Error\(/],
-    ['reset', /export function resetCaptchaState[\s\S]*?rejectCurrent\(new Error\('CAPTCHA verification was cancelled/],
-  ]) {
-    assert.match(widget, pattern, `${label} settles the request`)
-  }
+test('13. a failed sign-in rejects instead of hanging', () => {
+  // The sign-in is still bounded by exactly one timer, so a dead call surfaces an
+  // error instead of pinning the toggle in its busy state.
+  assert.match(sync, /const SIGN_IN_TIMEOUT_MS = 15_000/, 'the sign-in budget is unchanged')
+  assert.match(
+    sync,
+    /withSignInTimeout\(sb\.auth\.signInAnonymously\(\)\)/,
+    'the sign-in call is the one bounded by that timer',
+  )
+  assert.match(sync, /reject\(new Error\(`Anonymous sign-in timed out after \$\{SIGN_IN_TIMEOUT_MS \/ 1000\}s\.`\)\)/)
   // The budget must not have been inflated to hide the hang.
-  assert.match(widget, /const REQUEST_TIMEOUT_MS = 15000/)
   assert.match(notifications, /const STEP_TIMEOUT_MS = 15_000/)
 })
 
-test('13b. settlePending captures callbacks before clearing and nulls the promise', () => {
-  const body = widget.slice(widget.indexOf('function settlePending'), widget.indexOf('function rejectCurrent'))
-  const capture = body.indexOf('const resolve = pendingResolve')
-  const clear = body.indexOf('clearPending()')
-  const invoke = body.indexOf('resolve?.(value as string)')
-  assert.ok(capture < clear, 'resolver captured before state is cleared')
-  assert.ok(clear < invoke, 'captured callback invoked after clearing')
-  assert.match(body, /tokenPromise = null/, 'cached promise dropped so the next request is fresh')
-  assert.match(body, /clearTimeout\(retryTimeout\)/, 'timer cleared on settle')
+test('13b. a rejected sign-in is never cached for later callers', () => {
+  const body = slice(sync, 'export async function getUserId()', 'async function performAnonymousSignIn')
+  const join = body.indexOf('if (pendingSignInPromise)')
+  const assign = body.indexOf('pendingSignInPromise = performAnonymousSignIn()')
+  const clear = body.indexOf('pendingSignInPromise = null', assign)
+  assert.ok(join > 0, 'an in-flight sign-in is joined rather than started twice')
+  assert.ok(assign > join, 'the pending promise is created only after the join check')
+  assert.ok(clear > assign, 'the pending promise is cleared after the attempt')
+  assert.match(body, /finally \{[\s\S]*?pendingSignInPromise = null/, 'cleared in finally, so a failure is not cached')
 })
 
-test('14. a request before the widget is ready re-arms the render', () => {
-  // The old code skipped reset() when unready and then waited on a timer for a
-  // challenge that would never be presented.
-  assert.match(widget, /function ensureWidgetReady\(\): boolean/)
-  assert.match(widget, /ensureWidgetReady\(\)\s*\n?\s*if \(ready\)/, 'requestCaptchaToken calls ensureWidgetReady')
-  assert.match(widget, /captcha could not start: the Turnstile widget is not ready/i, 'unready widget rejects explicitly')
-  assert.ok(
-    widget.indexOf('ensureWidgetReady()') < widget.indexOf('retryTimeout = setTimeout'),
-    'readiness is established before the timer starts',
-  )
+test('14. anonymous sign-in requests no CAPTCHA token', () => {
+  const body = slice(sync, 'async function performAnonymousSignIn', 'export async function syncProfile')
+  // signInAnonymously() must be called with no arguments: passing
+  // { options: { captchaToken } } is what required the widget in the first place.
+  assert.match(body, /sb\.auth\.signInAnonymously\(\)/, 'signInAnonymously() takes no arguments')
+  assert.doesNotMatch(body, /captchaToken/, 'no captchaToken option is sent')
+  assert.doesNotMatch(body, /options:\s*\{/, 'no options object is passed at all')
+  // Nothing on this path may still reach for the removed widget module.
+  assert.doesNotMatch(body, /requestCaptchaToken|TurnstileWidget/, 'no CAPTCHA request in the sign-in path')
+  assert.match(body, /const userId = data\?\.user\?\.id \?\? null/, 'the user id is still read defensively')
 })
 
-test('14b. the Turnstile script is loaded by its own load event, not a global onload callback', () => {
-  // Regression guard for the production hang: the old tag was
-  // `api.js?onload=onloadTurnstileCallback` with defer+async, and the callback
-  // global is deleted the moment it fires, so readiness never propagated and
-  // turnstile.render() was never called (0 challenge iframes).
-  assert.match(
-    widget,
-    /TURNSTILE_SCRIPT_SRC = 'https:\/\/challenges\.cloudflare\.com\/turnstile\/v0\/api\.js\?render=explicit'/,
-    'script is the explicit-render build with no onload parameter',
+test('14b. no CAPTCHA or Turnstile reference survives in production code', () => {
+  assert.doesNotMatch(sync, /captcha|Turnstile|marsidev/i, 'sync.ts is free of CAPTCHA code')
+  assert.doesNotMatch(notifications, /captcha|Turnstile|marsidev/i, 'notifications.ts is free of CAPTCHA code')
+  assert.doesNotMatch(notifications, /getSignInError/, 'the CAPTCHA error channel is gone')
+  assert.doesNotMatch(app, /TurnstileWidget|getSignInError/, 'App.tsx neither imports nor renders the widget')
+  assert.equal(
+    Object.keys(pkg.dependencies || {}).includes('@marsidev/react-turnstile'),
+    false,
+    'the dependency is gone from package.json',
   )
-  // The comments in the component explain the old failure by name, so the
-  // negative checks below run against code only.
-  const code = widget
-    .split('\n')
-    .filter((line) => {
-      const t = line.trim()
-      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*')
-    })
-    .join('\n')
-
-  assert.doesNotMatch(code, /onload=/, 'no onload query parameter is requested')
-  assert.doesNotMatch(code, /onloadTurnstileCallback/, 'no dependency on the deleted global')
-  assert.doesNotMatch(code, /turnstile\.ready\(/, 'ready() is illegal on a deferred script tag')
-  assert.doesNotMatch(code, /turnstileRefInstance|@marsidev\/react-turnstile/, 'the wrapper library is gone')
-  assert.doesNotMatch(code, /\.defer|\.async\s*=\s*true\s*\n/, 'the tag is not deferred')
-  assert.match(widget, /script\.onload = \(\) => \{/, 'readiness comes from the tag load event')
-  assert.match(widget, /script\.onerror = \(\) => \{/, 'a script failure rejects instead of hanging')
-  assert.match(widget, /api\.render\(containerInstance, \{/, 'render is called explicitly on the container')
-  assert.match(widget, /widgetId = id/, 'the widget id is kept for reset and remove')
-  assert.match(widget, /api\.reset\(widgetId\)/, 'reset targets the stored id')
-  assert.match(
-    widget,
-    /if \(widgetId !== null\) return[\s\S]*?if \(!containerInstance\) return[\s\S]*?if \(!api\) return/,
-    'render waits for the container and the API, and never renders twice',
-  )
+  assert.ok(!envExample.includes('VITE_TURNSTILE_SITE_KEY'), 'the site key is gone from .env.example')
+  // Unrelated environment variables must survive untouched.
+  for (const key of [
+    'VITE_SUPABASE_URL',
+    'VITE_SUPABASE_PUBLISHABLE_KEY',
+    'VITE_VAPID_PUBLIC_KEY',
+    'SUPABASE_SECRET_KEY',
+    'WEB_PUSH_VAPID_PRIVATE_KEY',
+    'REMINDER_CRON_SECRET',
+  ]) {
+    assert.ok(envExample.includes(key), `${key} is still documented`)
+  }
 })
+
+
 
 test('15. saving a task never subscribes the phone', () => {
   assert.equal((app.match(/enablePushNotifications\(\)/g) || []).length, 1, 'exactly one call site')

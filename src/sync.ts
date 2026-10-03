@@ -1,6 +1,5 @@
 import { db } from './db'
 import { supabase } from './supabase'
-import { requestCaptchaToken, getCaptchaError, clearCaptchaError } from './components/TurnstileWidget'
 import { decideMerge, isPurgeableTombstone, shouldPushOrphan, visible, type Tombstoned } from './tombstones'
 import { MAX_RETRIES, classifyOutboxError, nextRetryState, shouldSkipItem, suppressesRemoteCopy } from './outbox'
 import type { OutboxItem } from './db'
@@ -16,10 +15,10 @@ const SIGN_IN_TIMEOUT_MS = 15_000
 /**
  * Bounds the anonymous sign-in network call.
  *
- * This timer starts only AFTER the CAPTCHA request has already settled, so it is
- * sequential with the CAPTCHA lifecycle timer rather than nested inside it. Two
- * sequential timers cannot preempt each other; two nested equal-length ones always
- * did, which is what turned every auth failure into a generic stage timeout.
+ * This is the single authoritative auth timer: notifications.ts deliberately does
+ * not wrap its own getUserId() call in a competing timeout, because two equally
+ * long timers on one stage always pre-empted each other and replaced the real
+ * reason with a generic stage timeout.
  */
 function withSignInTimeout(work: PromiseLike<unknown>): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -68,8 +67,8 @@ function fromDbPurchase(row: Record<string, unknown>): Purchase {
 }
 
 /**
- * Captcha lifecycle of the anonymous sign-in path. Diagnostic only: no token,
- * user id, credential or key is ever included, so this is safe to leave enabled.
+ * Anonymous sign-in diagnostics. Diagnostic only: no user id, credential or key
+ * is ever included, so this is safe to leave enabled.
  */
 function trace(event: string, detail?: string): void {
   console.warn(`[push] stage=auth ${event}${detail ? ` (${detail})` : ''}`)
@@ -99,15 +98,8 @@ async function performAnonymousSignIn(): Promise<string | null> {
   const sb = supabase
   if (!sb) return null
   try {
-    trace('captcha start')
-    const token = await requestCaptchaToken()
-    trace('captcha ok')
-    if (!token || !token.trim()) {
-      trace('failed', 'empty captcha token')
-      return null
-    }
     trace('anonymous-sign-in start')
-    const result = await withSignInTimeout(sb.auth.signInAnonymously({ options: { captchaToken: token } })) as {
+    const result = await withSignInTimeout(sb.auth.signInAnonymously()) as {
       data: { user?: { id?: string } | null } | null
       error: { name: string; message: string } | null
     }
@@ -121,16 +113,11 @@ async function performAnonymousSignIn(): Promise<string | null> {
     // user, so data is read defensively rather than assumed non-null.
     const userId = data?.user?.id ?? null
     trace(userId ? 'anonymous-sign-in ok' : 'anonymous-sign-in returned no user')
-    clearCaptchaError()
     return userId
   } catch (error) {
     pendingSignInPromise = null
     throw error
   }
-}
-
-export function getSignInError(): Error | null {
-  return getCaptchaError()
 }
 
 export async function syncProfile(name: string, timezone: string, theme: ThemeId = 'cat') {
