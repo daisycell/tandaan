@@ -130,6 +130,28 @@ export default function App() {
   const [shopping, setShopping] = useState<ShoppingItem[]>([])
   const [purchases, setPurchases] = useState<Purchase[]>([])
   const [debts, setDebts] = useState<Debt[]>([])
+  const [listPage, setListPage] = useState<'home' | 'tasks' | 'shopping' | 'purchases'>('home')
+  const [taskFilter, setTaskFilter] = useState<'today' | 'upcoming' | 'overdue' | 'done'>('today')
+  const [shoppingFilter, setShoppingFilter] = useState<'to_buy' | 'bought'>('to_buy')
+  const [purchaseRange, setPurchaseRange] = useState<'today' | 'this_week' | 'last_week' | 'this_month' | 'custom'>('today')
+  const [purchaseSearch, setPurchaseSearch] = useState('')
+  const [purchaseFrom, setPurchaseFrom] = useState('')
+  const [purchaseTo, setPurchaseTo] = useState('')
+  const [visibleTaskCount, setVisibleTaskCount] = useState(50)
+  const [visibleShoppingCount, setVisibleShoppingCount] = useState(50)
+  const [visiblePurchaseCount, setVisiblePurchaseCount] = useState(50)
+  const [swipeHintSeen, setSwipeHintSeen] = useState<Record<'tasks' | 'shopping' | 'purchases', boolean>>(() => {
+    if (typeof window === 'undefined') return { tasks: false, shopping: false, purchases: false }
+    try {
+      return {
+        tasks: window.localStorage.getItem('tandaan-swipe-hint-tasks-v1') === '1',
+        shopping: window.localStorage.getItem('tandaan-swipe-hint-shopping-v1') === '1',
+        purchases: window.localStorage.getItem('tandaan-swipe-hint-purchases-v1') === '1',
+      }
+    } catch {
+      return { tasks: false, shopping: false, purchases: false }
+    }
+  })
   const [debtPage, setDebtPage] = useState<'home' | 'list' | 'detail'>('home')
   const [debtDirection, setDebtDirection] = useState<Debt['direction']>('owe')
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null)
@@ -416,9 +438,152 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   const debtRemainingOwe = useMemo(() => liveDebts.filter(d => d.direction === 'owe').reduce((s,d)=>s+remainingCents(d),0), [liveDebts])
   const debtRemainingOwed = useMemo(() => liveDebts.filter(d => d.direction === 'owed_to_me').reduce((s,d)=>s+remainingCents(d),0), [liveDebts])
   const selectedDebt = selectedDebtId ? liveDebts.find(d => d.id === selectedDebtId) ?? null : null
-  const todayCount = liveTasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
+  const today = todayISO()
+  const todayTasks = useMemo(
+    () => liveTasks
+      .filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === today))
+      .sort((a, b) => (a.dueTime ?? '99:99').localeCompare(b.dueTime ?? '99:99') || b.createdAt.localeCompare(a.createdAt)),
+    [liveTasks, today]
+  )
+  const todayCount = todayTasks.length
   const purchaseTotal = livePurchases.reduce((sum, purchase) => sum + (purchase.price ?? 0), 0)
   const pricedPurchaseCount = livePurchases.filter(p => p.price != null).length
+
+  const filteredTasks = useMemo(() => {
+    return liveTasks
+      .filter(task => {
+        if (taskFilter === 'done') return task.isCompleted
+        if (task.isCompleted) return false
+        if (taskFilter === 'upcoming') return Boolean(task.dueDate && task.dueDate > today)
+        if (taskFilter === 'overdue') return Boolean(task.dueDate && task.dueDate < today)
+        return !task.dueDate || task.dueDate === today
+      })
+      .sort((a, b) => {
+        const aDate = a.dueDate ?? '9999-12-31'
+        const bDate = b.dueDate ?? '9999-12-31'
+        return taskFilter === 'done'
+          ? bDate.localeCompare(aDate) || b.updatedAt.localeCompare(a.updatedAt)
+          : aDate.localeCompare(bDate) || (a.dueTime ?? '99:99').localeCompare(b.dueTime ?? '99:99') || b.createdAt.localeCompare(a.createdAt)
+      })
+  }, [liveTasks, taskFilter, today])
+
+  const filteredShopping = useMemo(
+    () => liveShopping
+      .filter(item => shoppingFilter === 'to_buy' ? !item.isPurchased : item.isPurchased)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [liveShopping, shoppingFilter]
+  )
+
+  const purchaseBounds = useMemo(() => {
+    const base = new Date()
+    base.setHours(0, 0, 0, 0)
+    const start = new Date(base)
+    const end = new Date(base)
+
+    if (purchaseRange === 'this_week' || purchaseRange === 'last_week') {
+      const mondayOffset = (base.getDay() + 6) % 7
+      start.setDate(base.getDate() - mondayOffset + (purchaseRange === 'last_week' ? -7 : 0))
+      end.setTime(start.getTime())
+      if (purchaseRange === 'last_week') end.setDate(end.getDate() + 6)
+    } else if (purchaseRange === 'this_month') {
+      start.setDate(1)
+    } else if (purchaseRange === 'custom') {
+      return {
+        from: purchaseFrom || '',
+        to: purchaseTo || today,
+      }
+    }
+
+    return {
+      from: localISODate(start),
+      to: localISODate(end),
+    }
+  }, [purchaseRange, purchaseFrom, purchaseTo, today])
+
+  const filteredPurchases = useMemo(() => {
+    const query = purchaseSearch.trim().toLowerCase()
+    return livePurchases
+      .filter(purchase => {
+        const date = localISODate(new Date(purchase.purchasedAt))
+        const inRange = (!purchaseBounds.from || date >= purchaseBounds.from) && (!purchaseBounds.to || date <= purchaseBounds.to)
+        const inSearch = !query
+          || purchase.itemName.toLowerCase().includes(query)
+          || (purchase.notes ?? '').toLowerCase().includes(query)
+        return inRange && inSearch
+      })
+      .sort((a, b) => b.purchasedAt.localeCompare(a.purchasedAt))
+  }, [livePurchases, purchaseBounds, purchaseSearch])
+
+  useEffect(() => {
+    setVisibleTaskCount(50)
+  }, [taskFilter, listPage])
+
+  useEffect(() => {
+    setVisibleShoppingCount(50)
+  }, [shoppingFilter, listPage])
+
+  useEffect(() => {
+    setVisiblePurchaseCount(50)
+  }, [purchaseRange, purchaseSearch, purchaseFrom, purchaseTo, listPage])
+
+  useEffect(() => {
+    if (listPage === 'home') return
+    if (swipeHintSeen[listPage]) return
+    setSwipeHintSeen(prev => ({ ...prev, [listPage]: true }))
+    try {
+      window.localStorage.setItem(`tandaan-swipe-hint-${listPage}-v1`, '1')
+    } catch {
+      // The hint remains session-only when localStorage is unavailable.
+    }
+  }, [listPage, swipeHintSeen])
+
+  const taskPreview = todayTasks.slice(0, 3)
+  const shoppingPreview = liveShopping
+    .filter(item => !item.isPurchased)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 3)
+  const purchasePreview = livePurchases
+    .slice()
+    .sort((a, b) => b.purchasedAt.localeCompare(a.purchasedAt))
+    .slice(0, 3)
+  const debtPreview = liveDebts
+    .filter(debt => remainingCents(debt) > 0)
+    .slice()
+    .sort((a, b) => (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31'))
+    .slice(0, 3)
+
+  const openListPage = (page: 'tasks' | 'shopping' | 'purchases') => {
+    setDebtPage('home')
+    setListPage(page)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  const closeListPage = () => {
+    setListPage('home')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const taskDateKey = (task: Task) => task.dueDate ?? 'none'
+  const shoppingDateKey = (item: ShoppingItem) => localISODate(new Date(item.createdAt))
+  const purchaseDateKey = (item: Purchase) => localISODate(new Date(item.purchasedAt))
+  const formatListDate = (key: string) => {
+    if (key === 'none') return 'No due date'
+    return new Date(`${key}T00:00:00`).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+  }
+  const groupByDate = <T,>(items: T[], getKey: (item: T) => string) => {
+    const groups: Array<{ key: string; items: T[] }> = []
+    const index = new Map<string, number>()
+    for (const item of items) {
+      const key = getKey(item)
+      const existing = index.get(key)
+      if (existing == null) {
+        index.set(key, groups.length)
+        groups.push({ key, items: [item] })
+      } else {
+        groups[existing].items.push(item)
+      }
+    }
+    return groups
+  }
 
   async function syncNow(message: string) {
     if (!supabase || !navigator.onLine) {
@@ -1016,7 +1181,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         </div>
       </header>
 
-      {debtPage !== 'home' && (
+      {debtPage !== 'home' ? (
         <DebtView
           debts={filteredDebts}
           allDebts={liveDebts}
@@ -1050,117 +1215,249 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
           onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
         />
+      ) : listPage !== 'home' ? (
+        <section className="full-page card">
+          {listPage === 'tasks' && (
+            <>
+              <div className="subpage-header">
+                <div>
+                  <h1>Tasks</h1>
+                  <p>Today, upcoming, overdue, and completed tasks in one place.</p>
+                </div>
+                <button className="secondary back-btn" onClick={closeListPage}><ArrowLeft size={16} /> Home</button>
+              </div>
+              <div className="filter-tabs" role="tablist" aria-label="Task filters">
+                {([
+                  ['today', 'Today'],
+                  ['upcoming', 'Upcoming'],
+                  ['overdue', 'Overdue'],
+                  ['done', 'Done'],
+                ] as const).map(([value, label]) => (
+                  <button key={value} className={taskFilter === value ? 'filter-tab active' : 'filter-tab'} onClick={() => setTaskFilter(value)} role="tab" aria-selected={taskFilter === value}>{label}</button>
+                ))}
+              </div>
+              <div className="compact-section">
+                <div className="direct-add">
+                  <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'task' ? null : 'task')} aria-expanded={expandedAdd === 'task'} aria-label="Add a task">
+                    <span>Add a task</span><Plus size={17} />
+                  </button>
+                  {expandedAdd === 'task' && (
+                    <div className="direct-add-fields direct-add-task-fields">
+                      <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Task title" aria-label="Task title" autoFocus />
+                      <button className="direct-add-btn" onClick={() => void addTaskDirect()} disabled={!directTaskTitle.trim()} aria-label="Save task"><Check size={17} /></button>
+                    </div>
+                  )}
+                </div>
+                <div className="task-list full-list">
+                  {filteredTasks.slice(0, visibleTaskCount).length === 0 && <div className="empty card">{taskFilter === 'done' ? 'No completed tasks.' : taskFilter === 'upcoming' ? 'No upcoming tasks.' : taskFilter === 'overdue' ? 'No overdue tasks.' : 'No tasks for today.'}</div>}
+                  {groupByDate(filteredTasks.slice(0, visibleTaskCount), taskDateKey).map(group => (
+                    <div key={group.key} className="date-group">
+                      <div className="date-group-label">{formatListDate(group.key)}</div>
+                      <div className="full-list">
+                        {group.items.map((task, index) => (
+                          <SwipeToDelete key={task.id} showHint={!swipeHintSeen.tasks && group.items[0]?.id === filteredTasks[0]?.id && index === 0} onDelete={() => void deleteTask(task)}>
+                            <div className="task-card card">
+                              <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
+                              <div className="task-main">
+                                <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
+                                {task.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</div>}
+                              </div>
+                              <div className="task-actions">
+                                {!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}
+                                <button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button>
+                              </div>
+                            </div>
+                          </SwipeToDelete>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {visibleTaskCount < filteredTasks.length && <button className="secondary load-more" onClick={() => setVisibleTaskCount(count => count + 50)}>Load 50 more</button>}
+              </div>
+            </>
+          )}
+
+          {listPage === 'shopping' && (
+            <>
+              <div className="subpage-header">
+                <div>
+                  <h1>Shopping</h1>
+                  <p>Keep the buy list and bought history in the same compact view.</p>
+                </div>
+                <button className="secondary back-btn" onClick={closeListPage}><ArrowLeft size={16} /> Home</button>
+              </div>
+              <div className="filter-tabs" role="tablist" aria-label="Shopping filters">
+                {([
+                  ['to_buy', 'To buy'],
+                  ['bought', 'Bought'],
+                ] as const).map(([value, label]) => (
+                  <button key={value} className={shoppingFilter === value ? 'filter-tab active' : 'filter-tab'} onClick={() => setShoppingFilter(value)} role="tab" aria-selected={shoppingFilter === value}>{label}</button>
+                ))}
+              </div>
+              <div className="compact-section">
+                <div className="direct-add">
+                  <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'shopping' ? null : 'shopping')} aria-expanded={expandedAdd === 'shopping'} aria-label="Add a shopping item">
+                    <span>Add an item</span><Plus size={17} />
+                  </button>
+                  {expandedAdd === 'shopping' && (
+                    <div className="direct-add-fields">
+                      <input className="grow" value={directShopName} onChange={e => setDirectShopName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Item" aria-label="Shopping item" autoFocus />
+                      <input className="num" type="number" min="0" step="any" value={directShopQty} onChange={e => setDirectShopQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
+                      <input className="unit" value={directShopUnit} onChange={e => setDirectShopUnit(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Unit" aria-label="Unit" />
+                      <button className="direct-add-btn" onClick={() => void addShoppingDirect()} disabled={!directShopName.trim()} aria-label="Save shopping item"><Check size={17} /></button>
+                    </div>
+                  )}
+                </div>
+                <div className="task-list full-list">
+                  {filteredShopping.slice(0, visibleShoppingCount).length === 0 && <div className="empty card">{shoppingFilter === 'bought' ? 'No bought items.' : 'No items to buy.'}</div>}
+                  {groupByDate(filteredShopping.slice(0, visibleShoppingCount), shoppingDateKey).map(group => (
+                    <div key={group.key} className="date-group">
+                      <div className="date-group-label">{formatListDate(group.key)}</div>
+                      <div className="full-list">
+                        {group.items.map((item, index) => (
+                          <SwipeToDelete key={item.id} showHint={!swipeHintSeen.shopping && group.items[0]?.id === filteredShopping[0]?.id && index === 0} onDelete={() => void deleteShopping(item)}>
+                            <div className="task-card card">
+                              <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
+                              <div className="task-main">
+                                <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
+                                {(item.quantity != null || item.unit || item.expectedPrice != null) && <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</div>}
+                              </div>
+                              <div className="task-actions"><button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button></div>
+                            </div>
+                          </SwipeToDelete>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {visibleShoppingCount < filteredShopping.length && <button className="secondary load-more" onClick={() => setVisibleShoppingCount(count => count + 50)}>Load 50 more</button>}
+              </div>
+            </>
+          )}
+
+          {listPage === 'purchases' && (
+            <>
+              <div className="subpage-header">
+                <div>
+                  <h1>Purchases</h1>
+                  <p>Search your purchase history by day or date range.</p>
+                </div>
+                <button className="secondary back-btn" onClick={closeListPage}><ArrowLeft size={16} /> Home</button>
+              </div>
+              <div className="purchase-toolbar card">
+                <div className="purchase-range-tabs filter-tabs" role="tablist" aria-label="Purchase date ranges">
+                  {([
+                    ['today', 'Today'],
+                    ['this_week', 'This week'],
+                    ['last_week', 'Last week'],
+                    ['this_month', 'This month'],
+                    ['custom', 'Custom'],
+                  ] as const).map(([value, label]) => (
+                    <button key={value} className={purchaseRange === value ? 'filter-tab active' : 'filter-tab'} onClick={() => setPurchaseRange(value)} role="tab" aria-selected={purchaseRange === value}>{label}</button>
+                  ))}
+                </div>
+                {purchaseRange === 'custom' && (
+                  <div className="custom-range two-col">
+                    <div><label>From</label><input type="date" value={purchaseFrom} onChange={e => setPurchaseFrom(e.target.value)} /></div>
+                    <div><label>To</label><input type="date" value={purchaseTo} onChange={e => setPurchaseTo(e.target.value)} /></div>
+                  </div>
+                )}
+                <label className="purchase-search"><Search size={15} /><input value={purchaseSearch} onChange={e => setPurchaseSearch(e.target.value)} placeholder="Search purchases" aria-label="Search purchases" /></label>
+              </div>
+              <div className="purchase-total card">
+                <div><span>Total in range</span><strong>{money(filteredPurchases.reduce((sum, item) => sum + (item.price ?? 0), 0))}</strong></div>
+                <small>{filteredPurchases.length} item{filteredPurchases.length === 1 ? '' : 's'}</small>
+              </div>
+              <div className="task-list full-list compact-section">
+                {filteredPurchases.slice(0, visiblePurchaseCount).length === 0 && <div className="empty card">No purchases match this range.</div>}
+                {groupByDate(filteredPurchases.slice(0, visiblePurchaseCount), purchaseDateKey).map(group => {
+                  const subtotal = group.items.reduce((sum, item) => sum + (item.price ?? 0), 0)
+                  const priced = group.items.filter(item => item.price != null).length
+                  return (
+                    <div key={group.key} className="date-group">
+                      <div className="purchase-date-heading">
+                        <strong>{formatListDate(group.key)}</strong>
+                        <span>{money(subtotal)} · {priced}/{group.items.length} priced</span>
+                      </div>
+                      <div className="full-list">
+                        {group.items.map((item, index) => (
+                          <SwipeToDelete key={item.id} showHint={!swipeHintSeen.purchases && group.items[0]?.id === filteredPurchases[0]?.id && index === 0} onDelete={() => void deletePurchase(item)}>
+                            <div className="task-card card">
+                              <div className="purchase-dot">₱</div>
+                              <div className="task-main"><div className="task-title">{item.itemName}</div><div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div></div>
+                              <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button></div>
+                            </div>
+                          </SwipeToDelete>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              {visiblePurchaseCount < filteredPurchases.length && <button className="secondary load-more" onClick={() => setVisiblePurchaseCount(count => count + 50)}>Load 50 more</button>}
+              <div className="direct-add">
+                <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'purchase' ? null : 'purchase')} aria-expanded={expandedAdd === 'purchase'} aria-label="Add a purchase">
+                  <span>Add a purchase</span><Plus size={17} /></button>
+                {expandedAdd === 'purchase' && (
+                  <div className="direct-add-fields">
+                    <input className="grow" value={directPurchaseName} onChange={e => setDirectPurchaseName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Item" aria-label="Purchase item" autoFocus />
+                    <input className="num" type="number" min="0" step="any" value={directPurchaseQty} onChange={e => setDirectPurchaseQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
+                    <input className="unit" value={directPurchaseUnit} onChange={e => setDirectPurchaseUnit(e.target.value)} placeholder="Unit" aria-label="Unit" />
+                    <input className="num price" type="number" min="0" step="0.01" value={directPurchasePrice} onChange={e => setDirectPurchasePrice(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Price" aria-label="Price" />
+                    <button className="direct-add-btn" onClick={() => void addPurchaseDirect()} disabled={!directPurchaseName.trim()} aria-label="Save purchase"><Check size={17} /></button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      ) : (
+        <>
+          <section className="hero">
+            <h1>{greeting}, {name}</h1>
+            <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
+            <div className="summary-grid">
+              <div className="summary-card card">
+                <span>Today</span>
+                <strong>{todayCount}</strong>
+                <div className="summary-preview-list">
+                  {taskPreview.length === 0 ? <small>No tasks today</small> : taskPreview.map(task => <span key={task.id} className="summary-preview-item">{task.title}</span>)}
+                </div>
+                <button className="summary-see-all" onClick={() => openListPage('tasks')}>See all</button>
+                {displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}
+              </div>
+              <div className="summary-card card">
+                <span>Shopping</span>
+                <strong>{liveShopping.filter(i => !i.isPurchased).length}</strong>
+                <div className="summary-preview-list">
+                  {shoppingPreview.length === 0 ? <small>Nothing to buy</small> : shoppingPreview.map(item => <span key={item.id} className="summary-preview-item">{item.name}</span>)}
+                </div>
+                <button className="summary-see-all" onClick={() => openListPage('shopping')}>See all</button>
+                {displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}
+              </div>
+              <div className="summary-card card">
+                <span>Purchases</span>
+                <strong>{money(purchaseTotal)}</strong>
+                <div className="summary-preview-list">
+                  {purchasePreview.length === 0 ? <small>No purchases yet</small> : purchasePreview.map(item => <span key={item.id} className="summary-preview-item">{item.itemName}</span>)}
+                </div>
+                <button className="summary-see-all" onClick={() => openListPage('purchases')}>See all</button>
+                {displayThemeStickers[2] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}
+              </div>
+              <div className="summary-card card">
+                <span>Debt</span>
+                <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
+                <div className="summary-preview-list">
+                  {debtPreview.length === 0 ? <small>No active debts</small> : debtPreview.map(debt => <span key={debt.id} className="summary-preview-item">{debt.personName} · {formatDebtMoney(remainingCents(debt))}</span>)}
+                </div>
+                <button className="summary-see-all" onClick={openDebtList}>See all</button>
+                {displayThemeStickers[0] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}
+              </div>
+            </div>
+          </section>
+        </>
       )}
-      <button className="debt-home-summary card" onClick={openDebtList}>
-        <span><HandCoins size={18}/> Debt / Utang</span>
-        <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
-        <small>{formatDebtMoney(debtRemainingOwe)} I owe · {formatDebtMoney(debtRemainingOwed)} owed to me</small>
-      </button>
-
-      <section className="hero">
-        <h1>{greeting}, {name}</h1>
-        <p>{todayCount === 0 ? 'You are all caught up.' : `You have ${todayCount} task${todayCount === 1 ? '' : 's'} to keep in sight today.`}</p>
-        <div className="summary-grid">
-          <div className="summary-card card"><span>Today</span><strong>{todayCount}</strong><small>open tasks</small>{displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}</div>
-          <div className="summary-card card"><span>Shopping</span><strong>{liveShopping.filter(i => !i.isPurchased).length}</strong><small>to buy</small>{displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}</div>
-          <div className="summary-card card"><span>Purchases</span><strong>{money(purchaseTotal)}</strong><small>{purchases.length} recorded</small>{displayThemeStickers[2] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}</div>
-        </div>
-      </section>
-
-      <section className="section-block">
-        <div className="section-heading"><h2>Today</h2><span>{tasks.length} total</span></div>
-        <div className="direct-add">
-          <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'task' ? null : 'task')} aria-expanded={expandedAdd === 'task'} aria-label="Add a task">
-            <span>Add a task</span><Plus size={17} />
-          </button>
-          {expandedAdd === 'task' && (
-<div className="direct-add-fields direct-add-task-fields">
-            <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Task title" aria-label="Task title" autoFocus />
-              <button className="direct-add-btn" onClick={() => void addTaskDirect()} disabled={!directTaskTitle.trim()} aria-label="Save task"><Check size={17} /></button>
-            </div>
-          )}
-        </div>
-        <div className="task-list">
-          {tasks.length === 0 && <div className="empty card">No tasks yet. Add one above.</div>}
-          {tasks.map(task => (
-            <SwipeToDelete key={task.id} onDelete={() => void deleteTask(task)}>
-              <div className="task-card card">
-                <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
-                <div className="task-main">
-                  <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
-                  {task.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</div>}
-                </div>
-                <div className="task-actions">
-                  {!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}
-                  <button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button>
-                </div>
-              </div>
-            </SwipeToDelete>
-          ))}
-        </div>
-      </section>
-
-      <section className="section-block">
-        <div className="section-heading"><h2>Shopping</h2><span>{liveShopping.filter(i => !i.isPurchased).length} remaining</span></div>
-        <div className="direct-add">
-          <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'shopping' ? null : 'shopping')} aria-expanded={expandedAdd === 'shopping'} aria-label="Add a shopping item">
-            <span>Add an item</span><Plus size={17} />
-          </button>
-          {expandedAdd === 'shopping' && (
-            <div className="direct-add-fields">
-              <input className="grow" value={directShopName} onChange={e => setDirectShopName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Item" aria-label="Shopping item" autoFocus />
-              <input className="num" type="number" min="0" step="any" value={directShopQty} onChange={e => setDirectShopQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
-              <input className="unit" value={directShopUnit} onChange={e => setDirectShopUnit(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Unit" aria-label="Unit" />
-              <button className="direct-add-btn" onClick={() => void addShoppingDirect()} disabled={!directShopName.trim()} aria-label="Save shopping item"><Check size={17} /></button>
-            </div>
-          )}
-        </div>
-        <div className="task-list">
-          {shopping.length === 0 && <div className="empty card">No shopping items yet.</div>}
-          {shopping.map(item => (
-            <SwipeToDelete key={item.id} onDelete={() => void deleteShopping(item)}>
-              <div className="task-card card">
-                <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
-                <div className="task-main">
-                  <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
-                  {(item.quantity != null || item.unit || item.expectedPrice != null) && <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</div>}
-                </div>
-                <div className="task-actions"><button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button></div>
-              </div>
-            </SwipeToDelete>
-          ))}
-        </div>
-      </section>
-
-      <section className="section-block">
-        <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
-        <div className="purchase-total card"><div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div><small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small></div>
-        <div className="direct-add">
-          <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'purchase' ? null : 'purchase')} aria-expanded={expandedAdd === 'purchase'} aria-label="Add a purchase">
-            <span>Add a purchase</span><Plus size={17} />
-          </button>
-          {expandedAdd === 'purchase' && (
-            <div className="direct-add-fields">
-              <input className="grow" value={directPurchaseName} onChange={e => setDirectPurchaseName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Item" aria-label="Purchase item" autoFocus />
-              <input className="num" type="number" min="0" step="any" value={directPurchaseQty} onChange={e => setDirectPurchaseQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
-              <input className="unit" value={directPurchaseUnit} onChange={e => setDirectPurchaseUnit(e.target.value)} placeholder="Unit" aria-label="Unit" />
-              <input className="num price" type="number" min="0" step="0.01" value={directPurchasePrice} onChange={e => setDirectPurchasePrice(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Price" aria-label="Price" />
-              <button className="direct-add-btn" onClick={() => void addPurchaseDirect()} disabled={!directPurchaseName.trim()} aria-label="Save purchase"><Check size={17} /></button>
-            </div>
-          )}
-        </div>
-        <div className="task-list">
-          {purchases.length > 0 && purchases.map(item => (
-            <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
-              <div className="task-card card">
-                <div className="purchase-dot">₱</div>
-                <div className="task-main"><div className="task-title">{item.itemName}</div><div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div></div>
-                <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button></div>
-              </div>
-            </SwipeToDelete>
-          ))}
-        </div>
-      </section>
 
       {ambiguousInput && (
         <div className="modal-backdrop">
