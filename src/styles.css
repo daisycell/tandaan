@@ -782,6 +782,11 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .custom-theme-preview-stickers img { width:52px; height:52px; }
 
 @media (max-width:620px) {
+  /* Welcome-only logo alignment: restore the earlier optical row offsets.
+     The in-app/header logo keeps the shared natural grid positioning unchanged. */
+  .onboarding .tandaan-logo-cell { transform: translateY(-18%); }
+  .onboarding .tandaan-logo-cell:nth-child(n+3) { transform: translateY(-24%); }
+
   .app-shell { padding:14px 14px 56px !important; }
   .app-header { display:grid !important; grid-template-columns:minmax(0,1fr) auto !important; align-items:center !important; min-height:56px !important; }
   .brand-row { min-width:0; align-items:center !important; }
