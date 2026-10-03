@@ -34,6 +34,7 @@ type Props = {
   onPayment: () => void
   onMarkPaid: () => void
   onDelete: () => void
+  onDeleteById: (id: string) => void
   homeMode?: boolean
   onSeeAll?: () => void
   onHome?: () => void
@@ -119,7 +120,7 @@ export default function DebtView(p: Props) {
   return <section className="debt-page card">
     <div className="debt-page-head">
       <div className="debt-list-title"><button className="icon-btn list-back-btn" onClick={p.onHome} aria-label="Back to Home" title="Back to Home"><ArrowLeft size={18}/></button><div><h2>Debt</h2><p>Keep balances and payments in one place.</p></div></div>
-      <button className="primary" onClick={()=>p.setAddOpen(!p.addOpen)}><Plus size={16}/> Add debt</button>
+
     </div>
     <div className="debt-summary-strip"><div><span>I owe</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owe').reduce((s,d)=>s+remainingCents(d),0))}</strong></div><div><span>Owed to me</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owed_to_me').reduce((s,d)=>s+remainingCents(d),0))}</strong></div></div>
     {p.addOpen && <div className="debt-form">
@@ -135,7 +136,7 @@ export default function DebtView(p: Props) {
     </div></div>
     <div className="debt-list">
       {p.debts.length===0 && <div className="empty"><HandCoins size={24}/><strong>No debts yet.</strong><span>Add your first debt above.</span></div>}
-      {p.debts.map(d=>{const rem=remainingCents(d);const pct=paidPercent(d);const st=debtStatus(d,new Date().toISOString().slice(0,10));return <button className="debt-list-card" key={d.id} onClick={()=>p.onOpen(d.id)}><div className="debt-list-main"><strong>{d.personName}</strong><span>{d.direction==='owe'?'I owe':'Owed to me'} · {statusLabel(st)}</span></div><div className="debt-list-amount"><strong>{formatDebtMoney(rem)}</strong><small>{pct}% paid</small></div><div className="debt-progress"><span style={{width:`${pct}%`}}/></div>{d.dueDate&&<small className={st==='overdue'?'debt-overdue':''}>Due {new Date(`${d.dueDate}T00:00:00`).toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</small>}</button>})}
+      {p.debts.map(d=>{const rem=remainingCents(d);const pct=paidPercent(d);const st=debtStatus(d,new Date().toISOString().slice(0,10));return <div className="swipe-row debt-swipe-row" key={d.id} onTouchStart={e=>{const x=e.touches[0]?.clientX ?? 0;(e.currentTarget as HTMLElement).dataset.swipeStart=String(x)}} onTouchEnd={e=>{const start=Number((e.currentTarget as HTMLElement).dataset.swipeStart ?? 0);const end=e.changedTouches[0]?.clientX ?? start;if(start-end>80){p.onDeleteById(d.id)}}}><button className="debt-list-card" onClick={()=>p.onOpen(d.id)}><div className="debt-list-main"><strong>{d.personName}</strong><span>{d.direction==='owe'?'I owe':'Owed to me'} · {statusLabel(st)}</span></div><div className="debt-list-amount"><strong>{formatDebtMoney(rem)}</strong><small>{pct}% paid</small></div><div className="debt-progress"><span style={{width:`${pct}%`}}/></div>{d.dueDate&&<small className={st==='overdue'?'debt-overdue':''}>Due {new Date(`${d.dueDate}T00:00:00`).toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</small>}</button></div>})}
     </div>
   </section>
 }

@@ -950,6 +950,12 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     await syncNow('Debt deleted')
   }
 
+  async function deleteDebtById(id: string) {
+    const debt = liveDebts.find(d => d.id === id)
+    if (!debt) return
+    await deleteDebt(debt)
+  }
+
   const filteredDebts = useMemo(() => {
     const today = todayISO()
     return liveDebts.filter(d => {
@@ -1370,6 +1376,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           onPayment={() => selectedDebt && void addDebtPayment(selectedDebt)}
           onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
           onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
+          onDeleteById={id => void deleteDebtById(id)}
           homeMode={false}
           onSeeAll={openDebtList}
           onHome={() => { setDebtPage('home'); setSelectedDebtId(null) }}
