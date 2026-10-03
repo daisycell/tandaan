@@ -18,6 +18,9 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install Pillow
+        run: python -m pip install pillow
+
       - name: Build composite Tandaan icons
         run: |
           python - <<'PY'
@@ -60,12 +63,6 @@ jobs:
               )
           PY
 
-      - name: Install Pillow
-        if: false
-        run: python -m pip install pillow
-
-      - name: Install Pillow
-        run: python -m pip install pillow
 
       - name: Commit generated icons
         run: |
