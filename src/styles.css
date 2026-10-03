@@ -1085,6 +1085,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .subpage-header { display:flex; align-items:center; gap:9px; }
 .subpage-header > div { min-width:0; }
 .list-back-btn { flex:0 0 34px; width:34px; height:34px; padding:0; border-radius:10px; display:grid; place-items:center; }
+.debt-list-title { display:flex; align-items:center; gap:9px; min-width:0; }
+.debt-list-title > div { min-width:0; }
 .list-empty { display:flex; align-items:center; justify-content:center; gap:8px; min-height:72px; color:var(--muted); }
 .list-empty svg { flex:0 0 auto; color:var(--accent); }
 .purchase-range-tabs { overflow-x:auto; overflow-y:hidden; flex-wrap:nowrap !important; scrollbar-width:none; -webkit-overflow-scrolling:touch; padding-bottom:2px; }
