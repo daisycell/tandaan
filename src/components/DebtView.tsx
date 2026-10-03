@@ -119,7 +119,7 @@ export default function DebtView(p: Props) {
   return <section className="debt-page card">
     <div className="debt-page-head">
       <div className="debt-list-title"><button className="icon-btn list-back-btn" onClick={p.onHome} aria-label="Back to Home" title="Back to Home"><ArrowLeft size={18}/></button><div><h2>Debt</h2><p>Keep balances and payments in one place.</p></div></div>
-      <button className="primary" onClick={()=>p.setAddOpen(!p.addOpen)}><Plus size={16}/> Add debt</button>
+
     </div>
     <div className="debt-summary-strip"><div><span>I owe</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owe').reduce((s,d)=>s+remainingCents(d),0))}</strong></div><div><span>Owed to me</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owed_to_me').reduce((s,d)=>s+remainingCents(d),0))}</strong></div></div>
     {p.addOpen && <div className="debt-form">
