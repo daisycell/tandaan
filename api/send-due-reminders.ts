@@ -15,6 +15,7 @@ type DueTask = {
 }
 
 type PushSub = { id: string; endpoint: string; p256dh: string; auth: string }
+type DueDebt = { id: string; user_id: string; direction: 'owe' | 'owed_to_me'; person_name: string; due_date: string; reminder_at: string; payments: Array<{ amountCents?: number }> ; original_amount_cents: number }
 
 /**
  * Constant-time secret comparison.
@@ -139,6 +140,23 @@ export async function POST(req: Request) {
     }
     logStage('query_tasks', 'ok')
 
+  logStage('query_debts', 'start')
+    const { data: debts, error: debtError } = await admin
+      .from('debts')
+      .select('id,user_id,direction,person_name,due_date,reminder_at,payments,original_amount_cents')
+      .eq('reminder_enabled', true)
+      .is('deleted_at', null)
+      .is('reminder_sent_at', null)
+      .not('reminder_at', 'is', null)
+      .lte('reminder_at', now)
+      .order('reminder_at', { ascending: true })
+      .limit(50)
+    if (debtError) {
+      logStage('query_debts', 'failed', debtError.code ?? 'unknown')
+      return Response.json({ error: 'Reminder processing failed.' }, { status: 500 })
+    }
+    logStage('query_debts', 'ok')
+
   let sent = 0
   let removed = 0
   for (const task of (tasks ?? []) as DueTask[]) {
@@ -221,6 +239,44 @@ export async function POST(req: Request) {
     } catch (taskErr) {
       const err = taskErr as Error
       logStage('task_process', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
+    }
+  }
+
+  for (const debt of (debts ?? []) as DueDebt[]) {
+    try {
+      const { data: subs } = await admin.from('push_subscriptions').select('id,endpoint,p256dh,auth').eq('user_id', debt.user_id)
+      const paid = (debt.payments ?? []).reduce((sum, p) => sum + Math.max(0, Number(p.amountCents) || 0), 0)
+      const remaining = Math.max(0, Number(debt.original_amount_cents) - paid)
+      if (remaining === 0) {
+        await admin.from('debts').update({ reminder_sent_at: new Date().toISOString(), reminder_enabled: false, updated_at: new Date().toISOString() }).eq('id', debt.id)
+        continue
+      }
+      const direction = debt.direction === 'owe' ? 'You owe' : 'You are owed'
+      const payload = JSON.stringify({
+        title: 'Tandaan debt reminder',
+        body: `${direction} ₱${(remaining / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })} · ${debt.person_name} · due ${debt.due_date}`,
+        url: '/',
+        tag: `debt-${debt.id}`
+      })
+      let delivered = false
+      for (const sub of (subs ?? []) as PushSub[]) {
+        try {
+          await Promise.race([
+            webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 86400, urgency: 'high' }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('push_timeout')), 5000))
+          ])
+          sent += 1; delivered = true
+        } catch (error: any) {
+          const msg = error?.message || ''
+          const status = error?.statusCode
+          if (status === 404 || status === 410 || msg === 'push_timeout') await admin.from('push_subscriptions').delete().eq('id', sub.id)
+        }
+      }
+      if ((subs?.length ?? 0) === 0 || delivered) {
+        await admin.from('debts').update({ reminder_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', debt.id)
+      }
+    } catch (error) {
+      logStage('debt_process', 'failed', error instanceof Error ? error.message.slice(0, 80) : 'error')
     }
   }
 

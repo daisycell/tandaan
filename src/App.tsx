@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Pencil, Plus, Settings, Sparkles, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
-import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeColor, setLocalThemeCustomizations } from './db'
+import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Pencil, Plus, Settings, Sparkles, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal, ArrowLeft, Search, HandCoins, Trash2 } from 'lucide-react'
+import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeColor, setLocalThemeCustomizations, queueDebtUpsert, queueDebtDelete } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { type ParsedInput, type ParsedLine } from './parser'
 import { supabase } from './supabase'
@@ -9,9 +9,11 @@ import type { OutboxItem } from './db'
 import { calculateReminderAt, resolveReminder, defaultReminderOption, toMinutes, validateCustomReminder, clampDueDate, minDueDateForPreset, isDueDateAllowed, REMINDER_OPTIONS, REMINDER_UNITS, type ReminderOptionId, type ReminderUnit } from './reminders'
 import { disablePushNotifications, enablePushNotifications, getPushSubscription, PushStageError, pushSupported } from './notifications'
 import { TandaanLogo } from './components/TandaanLogo'
-import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
+import type { Debt, DebtPayment, Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
+import DebtView from './components/DebtView'
+import { debtStatus, formatDebtMoney, makeDebtPayment, paidPercent, parseAmountToCents, remainingCents, sortDebtPayments, totalPaidCents } from './debt'
 
 function newId() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -127,6 +129,19 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [shopping, setShopping] = useState<ShoppingItem[]>([])
   const [purchases, setPurchases] = useState<Purchase[]>([])
+  const [debts, setDebts] = useState<Debt[]>([])
+  const [debtPage, setDebtPage] = useState<'home' | 'list' | 'detail'>('home')
+  const [debtDirection, setDebtDirection] = useState<Debt['direction']>('owe')
+  const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null)
+  const [debtSearch, setDebtSearch] = useState('')
+  const [debtFilter, setDebtFilter] = useState<'all' | 'owe' | 'owed_to_me' | 'overdue' | 'paid'>('all')
+  const [debtPerson, setDebtPerson] = useState('')
+  const [debtAmount, setDebtAmount] = useState('')
+  const [debtDescription, setDebtDescription] = useState('')
+  const [debtDueDate, setDebtDueDate] = useState('')
+  const [debtReminder, setDebtReminder] = useState(true)
+  const [paymentAmount, setPaymentAmount] = useState('')
+  const [paymentNote, setPaymentNote] = useState('')
   const [input, setInput] = useState('')
   const [status, setStatus] = useState('Offline-first ready')
   const [flaggedItems, setFlaggedItems] = useState<OutboxItem[]>([])
@@ -210,6 +225,7 @@ export default function App() {
   const [directPurchasePrice, setDirectPurchasePrice] = useState('')
   // Only one category form is open at a time; null keeps all three collapsed.
   const [expandedAdd, setExpandedAdd] = useState<'task' | 'shopping' | 'purchase' | null>(null)
+  const [debtAddOpen, setDebtAddOpen] = useState(false)
 
   // null until the capability probe resolves, so the Speak button is not
   // disabled during the check itself.
@@ -228,10 +244,11 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     ;(async () => {
       try {
         // Render from local IndexedDB immediately; cloud work happens in the background.
-        const [localTasks, localShopping, localPurchases, saved, savedTheme, savedColor, savedCustomizations] = await Promise.all([
+        const [localTasks, localShopping, localPurchases, localDebts, saved, savedTheme, savedColor, savedCustomizations] = await Promise.all([
           db.tasks.toArray(),
           db.shopping.toArray(),
           db.purchases.toArray(),
+          db.debts.toArray(),
           getLocalName(),
           getLocalTheme(),
           getLocalThemeColor(),
@@ -241,6 +258,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         setTasks(visible(localTasks))
         setShopping(visible(localShopping))
         setPurchases(visible(localPurchases))
+        setDebts(visible(localDebts))
         setName(saved)
         setSettingsName(saved)
         if (isThemeId(savedTheme)) setTheme(savedTheme)
@@ -278,6 +296,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
             setTasks(synced.tasks)
             setShopping(synced.shoppingItems)
             setPurchases(synced.purchases)
+            setDebts(synced.debts)
             setStatus('Synced · offline ready')
             setFlaggedItems(await getFlaggedOutboxItems())
           } catch {
@@ -317,6 +336,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         setTasks(synced.tasks)
         setShopping(synced.shoppingItems)
         setPurchases(synced.purchases)
+        setDebts(synced.debts)
         setStatus('Synced · offline ready')
         setFlaggedItems(await getFlaggedOutboxItems())
       } catch {
@@ -392,6 +412,10 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   const liveTasks = useMemo(() => visible(tasks), [tasks])
   const liveShopping = useMemo(() => visible(shopping), [shopping])
   const livePurchases = useMemo(() => visible(purchases), [purchases])
+  const liveDebts = useMemo(() => visible(debts), [debts])
+  const debtRemainingOwe = useMemo(() => liveDebts.filter(d => d.direction === 'owe').reduce((s,d)=>s+remainingCents(d),0), [liveDebts])
+  const debtRemainingOwed = useMemo(() => liveDebts.filter(d => d.direction === 'owed_to_me').reduce((s,d)=>s+remainingCents(d),0), [liveDebts])
+  const selectedDebt = selectedDebtId ? liveDebts.find(d => d.id === selectedDebtId) ?? null : null
   const todayCount = liveTasks.filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === todayISO())).length
   const purchaseTotal = livePurchases.reduce((sum, purchase) => sum + (purchase.price ?? 0), 0)
   const pricedPurchaseCount = livePurchases.filter(p => p.price != null).length
@@ -579,6 +603,66 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
       setRemindersBusy(false)
     }
   }
+
+
+  async function persistDebt(debt: Debt, message = 'Debt saved') {
+    await db.debts.put(debt)
+    await queueDebtUpsert(debt)
+    setDebts(prev => prev.some(d => d.id === debt.id) ? prev.map(d => d.id === debt.id ? debt : d) : [debt, ...prev])
+    setStatus(message + ' · saved on this phone')
+    void syncNow(message)
+  }
+
+  function openDebtList() { setDebtPage('list'); setSelectedDebtId(null) }
+  function openDebtDetail(id: string) { setSelectedDebtId(id); setDebtPage('detail'); setPaymentAmount(''); setPaymentNote('') }
+
+  async function addDebt() {
+    const person = debtPerson.trim()
+    const amountCents = parseAmountToCents(debtAmount)
+    if (!person || amountCents == null) return
+    const now = new Date().toISOString()
+    const dueDate = debtDueDate || null
+    const reminderAt = debtReminder && dueDate ? new Date(`${dueDate}T09:00:00`).toISOString() : null
+    const debt: Debt = { id: newId(), direction: debtDirection, personName: person, description: debtDescription.trim() || null, originalAmountCents: amountCents, dueDate, reminderEnabled: Boolean(debtReminder && dueDate), reminderMinutesBefore: debtReminder && dueDate ? 1440 : null, reminderAt, reminderSentAt: null, payments: [], notes: null, createdAt: now, updatedAt: now }
+    await persistDebt(debt, 'Debt added')
+    setDebtPerson(''); setDebtAmount(''); setDebtDescription(''); setDebtDueDate(''); setDebtReminder(true); setDebtAddOpen(false)
+  }
+
+  async function addDebtPayment(debt: Debt) {
+    const amountCents = parseAmountToCents(paymentAmount)
+    if (amountCents == null) return
+    const remaining = remainingCents(debt)
+    if (amountCents > remaining) return
+    const payment: DebtPayment = makeDebtPayment(amountCents, new Date().toISOString(), null, paymentNote.trim() || null)
+    const updated: Debt = { ...debt, payments: [...debt.payments, payment], reminderEnabled: remaining - amountCents > 0 ? debt.reminderEnabled : false, reminderAt: remaining - amountCents > 0 ? debt.reminderAt : null, reminderSentAt: remaining - amountCents > 0 ? debt.reminderSentAt : null, updatedAt: new Date().toISOString() }
+    await persistDebt(updated, remaining - amountCents === 0 ? 'Debt fully paid' : 'Payment added')
+    setPaymentAmount(''); setPaymentNote('')
+  }
+
+  async function markDebtPaid(debt: Debt) {
+    const remaining = remainingCents(debt)
+    if (remaining === 0) return
+    const payment = makeDebtPayment(remaining, new Date().toISOString(), null, 'Marked as paid')
+    await persistDebt({ ...debt, payments: [...debt.payments, payment], reminderEnabled: false, reminderAt: null, reminderSentAt: null, updatedAt: new Date().toISOString() }, 'Debt fully paid')
+  }
+
+  async function deleteDebt(debt: Debt) {
+    await db.debts.put({ ...debt, deletedAt: new Date().toISOString() })
+    await queueDebtDelete(debt.id)
+    setDebts(prev => prev.filter(d => d.id !== debt.id))
+    openDebtList()
+    await syncNow('Debt deleted')
+  }
+
+  const filteredDebts = useMemo(() => {
+    const today = todayISO()
+    return liveDebts.filter(d => {
+      const status = debtStatus(d, today)
+      const matchFilter = debtFilter === 'all' || debtFilter === d.direction || debtFilter === 'paid' && status === 'paid' || debtFilter === 'overdue' && status === 'overdue'
+      const q = debtSearch.trim().toLowerCase()
+      return matchFilter && (!q || d.personName.toLowerCase().includes(q) || (d.description ?? '').toLowerCase().includes(q))
+    }).sort((a,b) => (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31'))
+  }, [liveDebts, debtFilter, debtSearch])
 
   async function persistTask(task: Task, message = 'Saved') {
     await db.tasks.put(task)
@@ -931,6 +1015,47 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           <button className="icon-btn" onClick={() => openSettings()} aria-label="My profile and settings" title="My profile and settings"><Settings size={18} /></button>
         </div>
       </header>
+
+      {debtPage !== 'home' && (
+        <DebtView
+          debts={filteredDebts}
+          allDebts={liveDebts}
+          filter={debtFilter}
+          search={debtSearch}
+          addOpen={debtAddOpen}
+          direction={debtDirection}
+          person={debtPerson}
+          amount={debtAmount}
+          description={debtDescription}
+          dueDate={debtDueDate}
+          reminder={debtReminder}
+          selected={selectedDebt}
+          paymentAmount={paymentAmount}
+          paymentNote={paymentNote}
+          setFilter={setDebtFilter}
+          setSearch={setDebtSearch}
+          setAddOpen={setDebtAddOpen}
+          setDirection={setDebtDirection}
+          setPerson={setDebtPerson}
+          setAmount={setDebtAmount}
+          setDescription={setDebtDescription}
+          setDueDate={setDebtDueDate}
+          setReminder={setDebtReminder}
+          setPaymentAmount={setPaymentAmount}
+          setPaymentNote={setPaymentNote}
+          onAdd={() => void addDebt()}
+          onOpen={openDebtDetail}
+          onBack={openDebtList}
+          onPayment={() => selectedDebt && void addDebtPayment(selectedDebt)}
+          onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
+          onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
+        />
+      )}
+      <button className="debt-home-summary card" onClick={openDebtList}>
+        <span><HandCoins size={18}/> Debt / Utang</span>
+        <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
+        <small>{formatDebtMoney(debtRemainingOwe)} I owe · {formatDebtMoney(debtRemainingOwed)} owed to me</small>
+      </button>
 
       <section className="hero">
         <h1>{greeting}, {name}</h1>

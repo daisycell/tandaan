@@ -56,3 +56,32 @@ export type Profile = {
   onboardingComplete: boolean
   theme?: ThemeId
 }
+
+
+export type DebtDirection = 'owe' | 'owed_to_me'
+
+export type DebtPayment = {
+  id: string
+  amountCents: number
+  paidAt: string
+  method: string | null
+  note: string | null
+}
+
+export type Debt = {
+  id: string
+  direction: DebtDirection
+  personName: string
+  description: string | null
+  originalAmountCents: number
+  dueDate: string | null
+  reminderEnabled: boolean
+  reminderMinutesBefore: number | null
+  reminderAt: string | null
+  reminderSentAt: string | null
+  payments: DebtPayment[]
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+  deletedAt?: string | null
+}
