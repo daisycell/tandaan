@@ -41,7 +41,14 @@ const precacheUrls = [...new Set([
   ...entryAssets,
 ])].sort()
 
-const hash = crypto.createHash('sha256').update(JSON.stringify(precacheUrls)).digest('hex').slice(0, 12)
+const iconInputs = await Promise.all([
+  '/favicon.svg',
+  '/manifest.webmanifest',
+].map(async file => {
+  const content = await fs.readFile(path.join(dist, file.slice(1)))
+  return [file, crypto.createHash('sha256').update(content).digest('hex')]
+}))
+const hash = crypto.createHash('sha256').update(JSON.stringify({ precacheUrls, iconInputs })).digest('hex').slice(0, 12)
 const source = await fs.readFile(swPath, 'utf8')
 const output = source
   .replace('__TANDAAN_CACHE_VERSION__', `tandaan-cache-${hash}`)

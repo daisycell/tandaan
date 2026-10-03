@@ -1,1 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0b1220"/><path d="M13 17h7l5 27h25l6-20H23" fill="none" stroke="#67e8f9" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="51" r="3" fill="#67e8f9"/><circle cx="48" cy="51" r="3" fill="#67e8f9"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Tandaan">
+  <defs>
+    <clipPath id="rounded">
+      <rect width="512" height="512" rx="56" />
+    </clipPath>
+  </defs>
+  <rect width="512" height="512" rx="56" fill="#0b0715"/>
+  <g clip-path="url(#rounded)">
+    <image href="/icons/logo-d1.png" x="8" y="8" width="246" height="246" preserveAspectRatio="xMidYMid slice"/>
+    <image href="/icons/logo-d2.png" x="258" y="8" width="246" height="246" preserveAspectRatio="xMidYMid slice"/>
+    <image href="/icons/logo-d3.png" x="8" y="258" width="246" height="246" preserveAspectRatio="xMidYMid slice"/>
+    <image href="/icons/logo-d4.png" x="258" y="258" width="246" height="246" preserveAspectRatio="xMidYMid slice"/>
+  </g>
+  <rect x="2" y="2" width="508" height="508" rx="54" fill="none" stroke="#67e8f9" stroke-width="4"/>
+</svg>
