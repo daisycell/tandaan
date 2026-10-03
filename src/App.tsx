@@ -1129,7 +1129,26 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                 {/* The native time input stays mounted and transparent on top of the
                     "Set time" cell, reusing the existing overlay pattern, so tapping
                     it opens the real OS picker on iOS. */}
-                <div className={dueTime ? 'due-choice-cell active' : 'due-choice-cell'}>
+                <div
+                  className={dueTime ? 'due-choice-cell active' : 'due-choice-cell'}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={dueTime ? 'Change due time' : 'Set due time'}
+                  onClick={() => {
+                    const input = dueTimeRef.current
+                    if (!input) return
+                    if (typeof input.showPicker === 'function') input.showPicker()
+                    else input.focus()
+                  }}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return
+                    e.preventDefault()
+                    const input = dueTimeRef.current
+                    if (!input) return
+                    if (typeof input.showPicker === 'function') input.showPicker()
+                    else input.focus()
+                  }}
+                >
                   <span className="due-choice-label">{dueTime || 'Set time'}</span>
                   <input
                     ref={dueTimeRef}
