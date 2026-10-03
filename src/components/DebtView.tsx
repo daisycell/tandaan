@@ -49,6 +49,10 @@ export default function DebtView(p: Props) {
     const preview = activeDebts.slice().sort((a, b) => (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31')).slice(0, 3)
     return <section className="section-block debt-home-section">
       <div className="section-heading"><h2>Debt</h2><span>{activeDebts.length} active</span></div>
+      <div className="debt-summary-strip">
+        <div><span>I owe</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owe').reduce((s,d)=>s+remainingCents(d),0))}</strong></div>
+        <div><span>Owed to me</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owed_to_me').reduce((s,d)=>s+remainingCents(d),0))}</strong></div>
+      </div>
       <div className="direct-add">
         <button type="button" className="direct-add-row" onClick={()=>p.setAddOpen(!p.addOpen)} aria-expanded={p.addOpen} aria-label="Add a debt">
           <span>Add a debt</span><Plus size={17}/>
