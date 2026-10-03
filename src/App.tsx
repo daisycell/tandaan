@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Pencil, Plus, Settings, ShoppingCart, Sparkles, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
+import { Bell, BellRing, CalendarPlus, Check, Circle, Clock3, Pencil, Plus, Settings, Sparkles, UserRound, X, Palette, WifiOff, CheckCircle2, SlidersHorizontal } from 'lucide-react'
 import { db, getLocalName, getLocalTheme, getLocalThemeColor, getLocalThemeCustomizations, queueDelete, queueTaskDelete, queueTaskUpsert, queueUpsert, setLocalName, setLocalTheme, setLocalThemeColor, setLocalThemeCustomizations } from './db'
 import { formatDue, greetingForHour, todayISO } from './dateUtils'
 import { type ParsedInput, type ParsedLine } from './parser'
@@ -8,6 +8,7 @@ import { getRemoteProfile, getUserId, syncAll, syncProfile, purgeLocalTombstones
 import type { OutboxItem } from './db'
 import { calculateReminderAt, resolveReminder, defaultReminderOption, toMinutes, validateCustomReminder, clampDueDate, minDueDateForPreset, isDueDateAllowed, REMINDER_OPTIONS, REMINDER_UNITS, type ReminderOptionId, type ReminderUnit } from './reminders'
 import { disablePushNotifications, enablePushNotifications, getPushSubscription, PushStageError, pushSupported } from './notifications'
+import { TandaanLogo } from './components/TandaanLogo'
 import type { Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
@@ -908,7 +909,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   if (!name) {
     return (
       <main className="onboarding" style={{ gap: 10 }}>
-        <div className="brand-mark"><Pencil size={36} /></div>
+        <TandaanLogo size={76} animated />
         <div className="brand">Tandaan</div>
         <p style={{ margin: '-2px 0 4px' }}>Your offline-first everyday memory.</p>
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -923,7 +924,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-row"><div className="brand-mark small"><ShoppingCart size={20} /></div><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
+        <div className="brand-row"><TandaanLogo size={44} /><div><div className="brand">Tandaan</div><div className="sync-status">{status}</div></div></div>
         <div className="header-actions">
           {flaggedItems.length > 0 && <button className="sync-warning" onClick={() => setFlaggedOpen(true)} title="Some changes could not be synced">{flaggedItems.length} failed to sync</button>}
           <button className={remindersEnabled ? 'icon-btn active' : 'icon-btn'} onClick={openRemindersSettings} aria-label={remindersEnabled ? 'Phone reminders enabled. Open settings' : 'Phone reminders off. Open settings'} title={remindersEnabled ? 'Phone reminders enabled' : 'Phone reminders off'}>{remindersEnabled ? <BellRing size={18} /> : <Bell size={18} />}</button>
