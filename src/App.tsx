@@ -178,7 +178,7 @@ export default function App() {
   const [colorPickerStep, setColorPickerStep] = useState<'animal' | 'color'>('animal')
   const [themeCustomizations, setThemeCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
   const [draftCustomizations, setDraftCustomizations] = useState<ThemeCustomizations>(DEFAULT_THEME_CUSTOMIZATIONS)
-  const [displayThemeStickers, setDisplayThemeStickers] = useState<string[]>(() => STICKERS[DEFAULT_THEME].slice(0, 3))
+  const [displayThemeStickers, setDisplayThemeStickers] = useState<string[]>(() => STICKERS[DEFAULT_THEME].slice(0, 4))
   const [ambiguousInput, setAmbiguousInput] = useState<ParsedInput | null>(null)
   const [ambiguityEditMode, setAmbiguityEditMode] = useState<'shopping' | 'purchase' | null>(null)
   const [savingAmbiguity, setSavingAmbiguity] = useState(false)
@@ -423,8 +423,8 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   }, [theme, themeCustomizations])
 
   useEffect(() => {
-    setDisplayThemeStickers(nextThemeStickers(theme, 3))
-    const id = window.setInterval(() => setDisplayThemeStickers(nextThemeStickers(theme, 3)), 8_000)
+    setDisplayThemeStickers(nextThemeStickers(theme, 4))
+    const id = window.setInterval(() => setDisplayThemeStickers(nextThemeStickers(theme, 4)), 8_000)
     return () => window.clearInterval(id)
   }, [theme])
 
@@ -1431,6 +1431,33 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         </section>
       ) : (
         <>
+          <section className="summary-grid home-stat-grid" aria-label="Home summaries">
+            <div className="summary-card card">
+              <span>Today</span>
+              <strong>{todayCount}</strong>
+              <small>open tasks</small>
+              {displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}
+            </div>
+            <div className="summary-card card">
+              <span>Shopping</span>
+              <strong>{liveShopping.filter(item => !item.isPurchased).length}</strong>
+              <small>remaining</small>
+              {displayThemeStickers[1] && <img className="summary-card-sticker sticker-b" src={stickerUrl(theme, displayThemeStickers[1])} alt="" aria-hidden="true" />}
+            </div>
+            <div className="summary-card card">
+              <span>Debt</span>
+              <strong>{formatDebtMoney(debtRemainingOwe + debtRemainingOwed)}</strong>
+              <small>remaining</small>
+              {displayThemeStickers[2] && <img className="summary-card-sticker sticker-c" src={stickerUrl(theme, displayThemeStickers[2])} alt="" aria-hidden="true" />}
+            </div>
+            <div className="summary-card card">
+              <span>Purchases</span>
+              <strong>{livePurchases.length}</strong>
+              <small>recorded</small>
+              {displayThemeStickers[3] && <img className="summary-card-sticker" src={stickerUrl(theme, displayThemeStickers[3])} alt="" aria-hidden="true" />}
+            </div>
+          </section>
+
           <section className="section-block">
             <div className="section-heading"><h2>Today</h2><span>{todayCount} open</span></div>
             <div className="direct-add">
@@ -1534,7 +1561,11 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           />
 
           <section className="section-block">
-            <div className="section-heading"><h2>Purchases</h2><span>{purchases.length} recorded</span></div>
+            <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
+            <div className="purchase-total card">
+              <div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div>
+              <small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small>
+            </div>
             <div className="direct-add">
               <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'purchase' ? null : 'purchase')} aria-expanded={expandedAdd === 'purchase'} aria-label="Add a purchase">
                 <span>Add a purchase</span><Plus size={17} /></button>
