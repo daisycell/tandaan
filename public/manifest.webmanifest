@@ -11,15 +11,15 @@
   "background_color": "#0b0715",
   "icons": [
     {
-      "src": "/favicon.svg?v=tandaan-dogs-20261003-2",
+      "src": "/icons/tandaan-dogs.svg?v=20261003-dogs",
       "sizes": "any",
-      "type": "image/png",
-      "purpose": "any"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     },
     {
-      "src": "/favicon.svg?v=tandaan-dogs-20261003-2",
+      "src": "/icons/tandaan-dogs.svg?v=20261003-dogs",
       "sizes": "any",
-      "type": "image/png",
+      "type": "image/svg+xml",
       "purpose": "any"
     }
   ]
