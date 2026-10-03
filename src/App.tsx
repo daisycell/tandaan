@@ -1567,8 +1567,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         </>
       )}
 
-}
-
       {ambiguousInput && (
         <div className="modal-backdrop">
           <div className="modal card ambiguity-modal">
