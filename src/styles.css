@@ -32,6 +32,13 @@
 
 * { box-sizing: border-box; }
 html { background: var(--bg); }
+/* The header is sticky, so any scroll-into-view destination (focus(), anchors,
+   scrollIntoView) would otherwise stop flush against the viewport top and sit
+   underneath it. scroll-padding-top reserves exactly the stuck header height at
+   every scroll destination without adding a gap at the top of the page or
+   changing the header itself. Height tracks the two header variants: 79px
+   desktop (8px+14px padding, 57px content), 58px at <=620px (4px+10px padding). */
+html { scroll-padding-top: 79px; }
 /* The page background is drawn by the body::before layer further down this
    file, so body itself carries no background of its own. */
 body { margin: 0; min-width: 320px; color: var(--text); }
@@ -42,8 +49,52 @@ button, input { -webkit-tap-highlight-color: transparent; }
 
 .boot { min-height: 100vh; display: grid; place-items: center; color: var(--muted); }
 .onboarding { width: min(92vw, 440px); min-height: 100vh; margin: auto; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 28px; }
-.brand-mark { width: 76px; height: 76px; border-radius: 24px; display: grid; place-items: center; background: linear-gradient(145deg, var(--surface-3), var(--surface)); border: 1px solid var(--accent-border); color: var(--accent); box-shadow: 0 18px 50px rgba(0,0,0,.28); }
-.brand-mark.small { width: 46px; height: 46px; border-radius: 14px; }
+/* Tandaan logo: one 2x2 formation, shared by onboarding and the header.
+   The grid is the formation. `1fr 1fr` plus a single gap and one border on the
+   container means no cell can be sized or positioned on its own, so the four
+   dogs always stay square and aligned no matter what the row is doing. */
+.tandaan-logo {
+  flex: 0 0 auto;
+  width: var(--logo-size, 44px);
+  height: var(--logo-size, 44px);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 1px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--accent-border);
+  box-shadow: 0 18px 50px rgba(0,0,0,.28);
+}
+/* Every tile is the same transparent cut-out, so `cover` scales each dog by the
+   same factor and `center` keeps them all optically centred. */
+.tandaan-logo-cell {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  min-width: 0;
+  min-height: 0;
+  user-select: none;
+}
+.tandaan-logo.is-animated { animation: tandaanLogoPop 620ms cubic-bezier(.2,1.3,.4,1) both; }
+/* Staggered arrival. Each dog uses its own fill so one wave reads as four
+   arrivals rather than four loops; delays are 0/90/180/270ms in DOM order. */
+.tandaan-logo.is-animated .tandaan-logo-cell { animation: 900ms ease-in-out infinite alternate; }
+.tandaan-logo.is-animated .tandaan-logo-cell:nth-child(1) { animation-delay: 0ms; animation-name: dogBobA; }
+.tandaan-logo.is-animated .tandaan-logo-cell:nth-child(2) { animation-delay: 90ms; animation-name: dogBobB; }
+.tandaan-logo.is-animated .tandaan-logo-cell:nth-child(3) { animation-delay: 180ms; animation-name: dogBobC; }
+.tandaan-logo.is-animated .tandaan-logo-cell:nth-child(4) { animation-delay: 270ms; animation-name: dogBobD; }
+@keyframes tandaanLogoPop { from { transform: scale(.9) rotate(-2deg); opacity: 0; } to { transform: none; opacity: 1; } }
+/* Subtle vertical bob. Transform-only, so it stays on the compositor and never
+   triggers layout. Amplitude is under 3% of the tile so the formation reads as
+   still, with life in it. */
+@keyframes dogBobA { from { transform: translateY(-1.5%); } to { transform: translateY(1.5%); } }
+@keyframes dogBobB { from { transform: translateY(1.5%); } to { transform: translateY(-1.5%); } }
+@keyframes dogBobC { from { transform: translateY(-1%) translateX(-1%); } to { transform: translateY(1%) translateX(1%); } }
+@keyframes dogBobD { from { transform: translateY(1%) translateX(1%); } to { transform: translateY(-1%) translateX(-1%); } }
 .brand { font-size: 30px; font-weight: 850; letter-spacing: -.03em; }
 .onboarding p { color: var(--muted); margin: -4px 0 16px; }
 .onboarding label, .modal label { font-size: 13px; color: var(--muted); }
@@ -124,10 +175,12 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .direct-add-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 .app-shell { width: min(100%, 980px); margin: auto; padding: 20px 18px 70px; }
-/* No backdrop-filter here: blurring the wallpaper behind a translucent bar made
-   it look muddy. A mostly-solid fade keeps the header readable, leaves the
-   wallpaper crisp around it, and keeps the sticky layout unchanged. */
-.app-header { display:flex; justify-content:space-between; align-items:center; gap:12px; position:sticky; top:0; z-index:5; padding:8px 0 14px; background: linear-gradient(to bottom, var(--header-bg) 0%, var(--header-bg) 72%, var(--header-bg-fade) 100%); }
+/* Fully transparent so the selected wallpaper shows through the header instead
+   of a dark gradient. Only the background changes: the sticky positioning,
+   z-index, padding and flex layout are unchanged, as are the icon buttons.
+   No backdrop-filter is added on purpose — blurring the wallpaper behind a bar
+   read as muddy in testing. */
+.app-header { display:flex; justify-content:space-between; align-items:center; gap:12px; position:sticky; top:0; z-index:5; padding:8px 0 14px; background: transparent; }
 .brand-row { display:flex; gap:11px; align-items:center; }
 .header-actions { display:flex; gap:8px; }
 .sync-status { color:var(--muted-2); font-size:11px; margin-top:2px; }
@@ -310,6 +363,14 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 
 @media (prefers-reduced-motion: reduce) {
   .summary-card-sticker { animation: none; }
+  /* :nth-child(n) matches every child while scoring (0,4,0), which is what makes
+     this beat the per-dog `.tandaan-logo.is-animated .tandaan-logo-cell:nth-child(1..4)`
+     rules at the same specificity later in the cascade. A reset without it sat at
+     (0,3,0), lost, and left animation-name intact — the reset only appeared to work
+     because the shorthand's duration happened to collapse to 0s. The container pop is
+     reset too: it is a scale/rotate entrance, not just movement. */
+  .tandaan-logo.is-animated { animation: none; }
+  .tandaan-logo.is-animated .tandaan-logo-cell:nth-child(n) { animation: none; }
 }
 
 /* v36 mobile/compact polish */
@@ -329,7 +390,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .app-shell { width: 100%; padding: 10px 10px max(44px, env(safe-area-inset-bottom)); }
   .app-header { padding-top: max(4px, env(safe-area-inset-top)); padding-bottom: 10px; }
   .brand-row { gap: 9px; min-width: 0; }
-  .brand-mark.small { width: 44px; height: 44px; border-radius: 13px; }
+  .tandaan-logo { width: 40px; height: 40px; border-radius: 8px; }
   .brand { font-size: 24px; }
   .sync-status { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .header-actions { gap: 6px; }
@@ -534,7 +595,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 @media (max-width: 620px) {
   .app-shell { width:100%; padding: 10px 10px max(52px, env(safe-area-inset-bottom)); }
   .app-header { gap: 8px; }
-  .brand-mark.small { width:42px; height:42px; border-radius:13px; }
+  .tandaan-logo { width: 38px; height: 38px; border-radius: 8px; }
   .brand { font-size:24px; }
   .sync-status { max-width:160px; }
   .header-actions { gap:6px; }
@@ -677,6 +738,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .theme-choice-copy small { display:block; white-space:normal; }
 
 @media (max-width:620px) {
+  html { scroll-padding-top: 58px; }
   .app-header { grid-template-columns:minmax(0,1fr) auto; }
   .summary-grid { grid-template-columns:repeat(3,minmax(0,1fr)) !important; gap:7px; }
   .summary-card { min-height:92px !important; padding:11px 9px !important; }
@@ -722,7 +784,9 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
   .app-shell { padding:14px 14px 56px !important; }
   .app-header { display:grid !important; grid-template-columns:minmax(0,1fr) auto !important; align-items:center !important; min-height:56px !important; }
   .brand-row { min-width:0; align-items:center !important; }
-  .brand-row .brand-mark.small { width:44px !important; height:44px !important; flex:0 0 44px !important; display:grid !important; place-items:center !important; }
+  /* The header logo must never be squeezed by a crowded row: it keeps its own
+     flex basis so only the text truncates. */
+  .brand-row .tandaan-logo { flex: 0 0 auto !important; }
   .header-actions { grid-template-columns:44px 44px; gap:8px; justify-self:end; }
   .summary-grid { grid-template-columns:repeat(3,minmax(0,1fr)) !important; gap:8px !important; margin-top:18px !important; }
   .summary-card { min-height:110px !important; padding:13px 11px !important; border-radius:18px !important; }
