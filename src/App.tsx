@@ -1415,7 +1415,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                       <div className="full-list">
                         {group.items.map((task, index) => (
                           <SwipeToDelete key={task.id} showHint={!swipeHintSeen.tasks && group.items[0]?.id === filteredTasks[0]?.id && index === 0} onDelete={() => void deleteTask(task)}>
-                            <div className="task-card card">
+                            <div className="task-card card list-item-card">
                               <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
                               <div className="task-main">
                                 <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
@@ -1467,7 +1467,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                       <div className="full-list">
                         {group.items.map((item, index) => (
                           <SwipeToDelete key={item.id} showHint={!swipeHintSeen.shopping && group.items[0]?.id === filteredShopping[0]?.id && index === 0} onDelete={() => void deleteShopping(item)}>
-                            <div className="task-card card">
+                            <div className="task-card card list-item-card">
                               <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
                               <div className="task-main">
                                 <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
@@ -1537,7 +1537,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                       <div className="full-list">
                         {group.items.map((item, index) => (
                           <SwipeToDelete key={item.id} showHint={!swipeHintSeen.purchases && group.items[0]?.id === filteredPurchases[0]?.id && index === 0} onDelete={() => void deletePurchase(item)}>
-                            <div className="task-card card">
+                            <div className="task-card card list-item-card">
                               <div className="purchase-dot">₱</div>
                               <div className="task-main"><div className="task-title">{item.itemName}</div><div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div></div>
                               <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button></div>
@@ -1600,7 +1600,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               {todayTasks.length === 0 && <div className="empty card list-empty"><Check size={22} /><span>You are all caught up.</span></div>}
               {todayTasks.slice(0, 3).map(task => (
                 <SwipeToDelete key={task.id} onDelete={() => void deleteTask(task)}>
-                  <div className="task-card card">
+                  <div className="task-card card list-item-card">
                     <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
                     <div className="task-main">
                       <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
@@ -1635,7 +1635,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               {liveShopping.length === 0 && <div className="empty card list-empty"><ShoppingCart size={22} /><span>No shopping items yet.</span></div>}
               {liveShopping.slice(0, 3).map(item => (
                 <SwipeToDelete key={item.id} onDelete={() => void deleteShopping(item)}>
-                  <div className="task-card card">
+                  <div className="task-card card list-item-card">
                     <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
                     <div className="task-main">
                       <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
@@ -1709,7 +1709,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               {livePurchases.length === 0 && <div className="empty card list-empty"><Receipt size={22} /><span>No purchases yet.</span></div>}
               {livePurchases.slice(0, 3).map(item => (
                 <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
-                  <div className="task-card card">
+                  <div className="task-card card list-item-card">
                     <div className="purchase-dot">₱</div>
                     <div className="task-main">
                       <div className="task-title">{item.itemName}</div>
