@@ -69,23 +69,31 @@ export function classifyOutboxError(error: unknown, online: boolean): OutboxFail
   return 'rejected'
 }
 
-export type RetryState = { retryCount: number; flagged: boolean }
+/** Delay before the next automatic retry for each rejected attempt. */
+export const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000, 600_000, 1_800_000] as const
+
+export type RetryState = { retryCount: number; flagged: boolean; nextRetryAt: string }
 
 /**
- * Advances an item's retry bookkeeping.
+ * Advances an item's retry bookkeeping and schedules the next automatic retry.
  *
- * Returns null when the failure should not be charged to the record, meaning
- * the item is left exactly as it was and simply retried on a later pass.
+ * The timestamp is computed here so sync.ts only needs to persist and enforce
+ * the policy. The optional now argument keeps this pure and deterministic in tests.
+ * Returns null when the failure should not be charged to the record.
  */
 export function nextRetryState(
   current: { retryCount?: number; flagged?: boolean },
   failure: OutboxFailure,
+  now = Date.now(),
 ): RetryState | null {
   if (failure !== 'rejected') return null
-  // An already-flagged item stays flagged; its counter must keep climbing so the
-  // UI can show how many times it has been refused.
   const retryCount = (current.retryCount ?? 0) + 1
-  return { retryCount, flagged: current.flagged === true || retryCount >= MAX_RETRIES }
+  const backoff = RETRY_BACKOFF_MS[Math.min(retryCount, MAX_RETRIES) - 1]
+  return {
+    retryCount,
+    flagged: current.flagged === true || retryCount >= MAX_RETRIES,
+    nextRetryAt: new Date(now + backoff).toISOString(),
+  }
 }
 
 /** True when a queued item should be passed over without attempting it. */

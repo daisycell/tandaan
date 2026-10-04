@@ -204,6 +204,8 @@ async function flushOutbox(userId: string) {
     // Already flagged: stop attempting it, but keep it queued so the user can
     // retry or discard it explicitly. Nothing is lost.
     if (shouldSkipItem(item)) continue
+    const scheduled = (item as OutboxItem & { nextRetryAt?: string }).nextRetryAt
+    if (scheduled && new Date(scheduled).getTime() > Date.now()) continue
     try {
       await applyOutboxItem(item, userId)
       if (item.id !== undefined) await db.outbox.delete(item.id)
@@ -214,8 +216,9 @@ async function flushOutbox(userId: string) {
         await db.outbox.update(item.id, {
           retryCount: next.retryCount,
           flagged: next.flagged,
+          nextRetryAt: next.nextRetryAt,
           lastError: error instanceof Error ? error.message : String(error),
-        })
+        } as any)
       }
       // Transient and offline failures leave retryCount untouched; the next
       // flush retries them for free.
@@ -237,11 +240,11 @@ export async function getFlaggedOutboxCount() {
 export async function retryOutboxItem(id: number) {
   const item = await db.outbox.get(id)
   if (!item) return
-  await db.outbox.update(id, { retryCount: 0, flagged: false, lastError: undefined })
+  await db.outbox.update(id, { retryCount: 0, flagged: false, nextRetryAt: undefined, lastError: undefined } as any)
   const userId = await getUserId()
   if (!userId || !supabase) return
   try {
-    await applyOutboxItem({ ...item, retryCount: 0, flagged: false }, userId)
+    await applyOutboxItem({ ...item, retryCount: 0, flagged: false, nextRetryAt: undefined } as OutboxItem, userId)
     await db.outbox.delete(id)
   } catch (error) {
     const online = typeof navigator === 'undefined' ? true : navigator.onLine
@@ -250,8 +253,9 @@ export async function retryOutboxItem(id: number) {
       await db.outbox.update(id, {
         retryCount: next.retryCount,
         flagged: next.flagged,
+        nextRetryAt: next.nextRetryAt,
         lastError: error instanceof Error ? error.message : String(error),
-      })
+      } as any)
     }
   }
 }
