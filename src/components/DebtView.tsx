@@ -134,7 +134,7 @@ export default function DebtView(p: Props) {
         const pct = paidPercent(d)
         const st = debtStatus(d, new Date().toISOString().slice(0, 10))
         return <SwipeToDelete key={d.id} confirmDelete onDelete={() => p.onDeleteById(d.id)}>
-          <button className="debt-list-card" onClick={() => p.onOpen(d.id)}>
+          <button className="debt-list-card list-item-card" onClick={() => p.onOpen(d.id)}>
             <div className="debt-list-main"><strong>{d.personName}</strong><span>{d.direction === 'owe' ? 'I owe' : 'Owed to me'} · {statusLabel(st)}</span></div>
             <div className="debt-list-amount"><strong>{formatDebtMoney(rem)}</strong><small>{pct}% paid</small></div>
             <div className="debt-progress"><span style={{ width: `${pct}%` }} /></div>
