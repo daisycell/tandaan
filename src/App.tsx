@@ -1170,7 +1170,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     // re-anchor the reminder using the offset the task already had. 'none' is
     // distinguishable because reminderMinutesBefore is null in that case.
     const keepMinutes = editingTask.reminderMinutesBefore ?? 1440
-    const reminderEnabled = Boolean(nextDate) && editingTask.reminderEnabled && keepMinutes > 0
+    const reminderEnabled = Boolean(nextDate) && editingTask.reminderEnabled && keepMinutes >= 0
     const updated: Task = {
       ...editingTask,
       title: editTitle.trim() || editingTask.title,
