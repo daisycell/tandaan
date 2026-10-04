@@ -1717,6 +1717,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
             onPayment={() => selectedDebt && void addDebtPayment(selectedDebt)}
             onMarkPaid={() => selectedDebt && void markDebtPaid(selectedDebt)}
             onDelete={() => selectedDebt && void deleteDebt(selectedDebt)}
+            onDeleteById={id => void deleteDebtById(id)}
             homeMode={true}
             onSeeAll={openDebtList}
           />
