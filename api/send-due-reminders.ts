@@ -83,6 +83,7 @@ export async function POST(req: Request) {
     try {
       webpush.setVapidDetails(subject, publicKey, privateKey)
     } catch (vapidErr) {
+      console.error('[reminders] vapid full error', vapidErr)
       const err = vapidErr as Error
       logStage('vapid', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
       return Response.json({ error: 'Reminder service configuration error.' }, { status: 500 })
@@ -102,6 +103,7 @@ export async function POST(req: Request) {
         }
       })
     } catch (sbErr) {
+      console.error('[reminders] supabase full error', sbErr)
       const err = sbErr as Error
       logStage('supabase', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
       return Response.json({ error: 'Reminder service error.' }, { status: 500 })
@@ -135,6 +137,7 @@ export async function POST(req: Request) {
       return { data: null, error: { code: 'query_timeout', message: err.message } as any }
     })
     if (taskError) {
+      console.error('[reminders] query_tasks full error', taskError)
       logStage('query_tasks', 'failed', (taskError as any).code ?? 'unknown')
       return Response.json({ error: 'Reminder processing failed.' }, { status: 500 })
     }
@@ -152,6 +155,7 @@ export async function POST(req: Request) {
       .order('reminder_at', { ascending: true })
       .limit(50)
     if (debtError) {
+      console.error('[reminders] query_debts full error', debtError)
       logStage('query_debts', 'failed', debtError.code ?? 'unknown')
       return Response.json({ error: 'Reminder processing failed.' }, { status: 500 })
     }
@@ -283,6 +287,7 @@ export async function POST(req: Request) {
   logStage('response', 'ok', `ms=${Date.now() - start}`)
   return Response.json({ ok: true, checked: tasks?.length ?? 0, sent, removed })
   } catch (e) {
+    console.error('[reminders] unexpected full error', e)
     const err = e as Error
     logStage('unexpected', 'failed', `${err.name}:${err.message.slice(0, 100)}`)
     return Response.json({ error: 'Reminder service error.' }, { status: 500 })
