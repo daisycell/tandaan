@@ -83,6 +83,7 @@ export async function POST(req: Request) {
     try {
       webpush.setVapidDetails(subject, publicKey, privateKey)
     } catch (vapidErr) {
+      console.error('[reminders] vapid full error', vapidErr)
       const err = vapidErr as Error
       logStage('vapid', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
       return Response.json({ error: 'Reminder service configuration error.' }, { status: 500 })
@@ -102,6 +103,7 @@ export async function POST(req: Request) {
         }
       })
     } catch (sbErr) {
+      console.error('[reminders] supabase full error', sbErr)
       const err = sbErr as Error
       logStage('supabase', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
       return Response.json({ error: 'Reminder service error.' }, { status: 500 })
@@ -109,53 +111,74 @@ export async function POST(req: Request) {
     logStage('supabase', 'ok')
 
     const now = new Date().toISOString()
-    logStage('query_tasks', 'start')
-    const { data: tasks, error: taskError } = await (async () => {
-      const controller = new AbortController()
-      const t = setTimeout(() => controller.abort(), 8000)
-      try {
-        return await admin
-          .from('tasks')
-          .select('id,user_id,title,due_date,due_time,reminder_at')
-          .eq('is_completed', false)
-          .eq('reminder_enabled', true)
-          .is('deleted_at', null)
-          .is('reminder_sent_at', null)
-          .not('reminder_at', 'is', null)
-          .lte('reminder_at', now)
-          .order('reminder_at', { ascending: true })
-          .limit(50)
-          .abortSignal(controller.signal as any)
-      } finally {
-        clearTimeout(t)
-      }
-    })().catch((e) => {
-      const err = e as Error
-      logStage('query_tasks', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
-      return { data: null, error: { code: 'query_timeout', message: err.message } as any }
-    })
-    if (taskError) {
-      logStage('query_tasks', 'failed', (taskError as any).code ?? 'unknown')
-      return Response.json({ error: 'Reminder processing failed.' }, { status: 500 })
-    }
-    logStage('query_tasks', 'ok')
+    let tasks: DueTask[] = []
+    let debts: DueDebt[] = []
+    let taskQueryFailed = false
+    let debtQueryFailed = false
 
-  logStage('query_debts', 'start')
-    const { data: debts, error: debtError } = await admin
-      .from('debts')
-      .select('id,user_id,direction,person_name,due_date,reminder_at,payments,original_amount_cents')
-      .eq('reminder_enabled', true)
-      .is('deleted_at', null)
-      .is('reminder_sent_at', null)
-      .not('reminder_at', 'is', null)
-      .lte('reminder_at', now)
-      .order('reminder_at', { ascending: true })
-      .limit(50)
-    if (debtError) {
-      logStage('query_debts', 'failed', debtError.code ?? 'unknown')
-      return Response.json({ error: 'Reminder processing failed.' }, { status: 500 })
+    logStage('query_tasks', 'start')
+    try {
+      const { data, error } = await (async () => {
+        const controller = new AbortController()
+        const t = setTimeout(() => controller.abort(), 8000)
+        try {
+          return await admin
+            .from('tasks')
+            .select('id,user_id,title,due_date,due_time,reminder_at')
+            .eq('is_completed', false)
+            .eq('reminder_enabled', true)
+            .is('deleted_at', null)
+            .is('reminder_sent_at', null)
+            .not('reminder_at', 'is', null)
+            .lte('reminder_at', now)
+            .order('reminder_at', { ascending: true })
+            .limit(50)
+            .abortSignal(controller.signal as any)
+        } finally {
+          clearTimeout(t)
+        }
+      })()
+      if (error) {
+        console.error('[reminders] query_tasks full error', error)
+        logStage('query_tasks', 'failed', error.code ?? 'unknown')
+        taskQueryFailed = true
+      } else {
+        tasks = (data ?? []) as DueTask[]
+        logStage('query_tasks', 'ok')
+      }
+    } catch (error) {
+      console.error('[reminders] query_tasks full error', error)
+      const err = error as Error
+      logStage('query_tasks', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
+      taskQueryFailed = true
     }
-    logStage('query_debts', 'ok')
+
+    logStage('query_debts', 'start')
+    try {
+      const { data, error } = await admin
+        .from('debts')
+        .select('id,user_id,direction,person_name,due_date,reminder_at,payments,original_amount_cents')
+        .eq('reminder_enabled', true)
+        .is('deleted_at', null)
+        .is('reminder_sent_at', null)
+        .not('reminder_at', 'is', null)
+        .lte('reminder_at', now)
+        .order('reminder_at', { ascending: true })
+        .limit(50)
+      if (error) {
+        console.error('[reminders] query_debts full error', error)
+        logStage('query_debts', 'failed', error.code ?? 'unknown')
+        debtQueryFailed = true
+      } else {
+        debts = (data ?? []) as DueDebt[]
+        logStage('query_debts', 'ok')
+      }
+    } catch (error) {
+      console.error('[reminders] query_debts full error', error)
+      const err = error as Error
+      logStage('query_debts', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
+      debtQueryFailed = true
+    }
 
   let sent = 0
   let removed = 0
@@ -184,6 +207,11 @@ export async function POST(req: Request) {
         continue
       }
       logStage('query_subs', 'ok')
+
+      if ((subs?.length ?? 0) === 0) {
+        logStage('task_process', 'skipped', 'no_subscription')
+        continue
+      }
 
       const payload = JSON.stringify({
         title: 'Tandaan reminder',
@@ -219,7 +247,7 @@ export async function POST(req: Request) {
         }
       }
 
-      if ((subs?.length ?? 0) === 0 || delivered) {
+      if (delivered) {
         try {
           logStage('task_update', 'start')
           const controller = new AbortController()
@@ -237,6 +265,7 @@ export async function POST(req: Request) {
         }
       }
     } catch (taskErr) {
+      console.error('[reminders] task_process full error', taskErr)
       const err = taskErr as Error
       logStage('task_process', 'failed', `${err.name}:${err.message.slice(0, 80)}`)
     }
@@ -272,17 +301,29 @@ export async function POST(req: Request) {
           if (status === 404 || status === 410 || msg === 'push_timeout') await admin.from('push_subscriptions').delete().eq('id', sub.id)
         }
       }
-      if ((subs?.length ?? 0) === 0 || delivered) {
+      if (delivered) {
         await admin.from('debts').update({ reminder_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', debt.id)
+      } else if ((subs?.length ?? 0) === 0) {
+        logStage('debt_process', 'skipped', 'no_subscription')
       }
     } catch (error) {
+      console.error('[reminders] debt_process full error', error)
       logStage('debt_process', 'failed', error instanceof Error ? error.message.slice(0, 80) : 'error')
     }
   }
 
   logStage('response', 'ok', `ms=${Date.now() - start}`)
-  return Response.json({ ok: true, checked: tasks?.length ?? 0, sent, removed })
+  return Response.json({
+    ok: true,
+    checked: tasks.length,
+    sent,
+    removed,
+    partial: taskQueryFailed || debtQueryFailed,
+    taskQueryFailed,
+    debtQueryFailed,
+  })
   } catch (e) {
+    console.error('[reminders] unexpected full error', e)
     const err = e as Error
     logStage('unexpected', 'failed', `${err.name}:${err.message.slice(0, 100)}`)
     return Response.json({ error: 'Reminder service error.' }, { status: 500 })
