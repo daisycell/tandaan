@@ -1402,17 +1402,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                 ))}
               </div>
               <div className="compact-section">
-                <div className="direct-add">
-                  <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'task' ? null : 'task')} aria-expanded={expandedAdd === 'task'} aria-label="Add a task">
-                    <span>Add a task</span><Plus size={17} />
-                  </button>
-                  {expandedAdd === 'task' && (
-                    <div className="direct-add-fields direct-add-task-fields">
-                      <input value={directTaskTitle} onChange={e => setDirectTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTaskDirect() }} placeholder="Task title" aria-label="Task title" autoFocus />
-                      <button className="direct-add-btn" onClick={() => void addTaskDirect()} disabled={!directTaskTitle.trim()} aria-label="Save task"><Check size={17} /></button>
-                    </div>
-                  )}
-                </div>
                 <div className="task-list full-list">
                   {filteredTasks.slice(0, visibleTaskCount).length === 0 && (
                     <div className="empty card list-empty">
@@ -1465,19 +1454,6 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                 ))}
               </div>
               <div className="compact-section">
-                <div className="direct-add">
-                  <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'shopping' ? null : 'shopping')} aria-expanded={expandedAdd === 'shopping'} aria-label="Add a shopping item">
-                    <span>Add an item</span><Plus size={17} />
-                  </button>
-                  {expandedAdd === 'shopping' && (
-                    <div className="direct-add-fields">
-                      <input className="grow" value={directShopName} onChange={e => setDirectShopName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Item" aria-label="Shopping item" autoFocus />
-                      <input className="num" type="number" min="0" step="any" value={directShopQty} onChange={e => setDirectShopQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
-                      <input className="unit" value={directShopUnit} onChange={e => setDirectShopUnit(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addShoppingDirect() }} placeholder="Unit" aria-label="Unit" />
-                      <button className="direct-add-btn" onClick={() => void addShoppingDirect()} disabled={!directShopName.trim()} aria-label="Save shopping item"><Check size={17} /></button>
-                    </div>
-                  )}
-                </div>
                 <div className="task-list full-list">
                   {filteredShopping.slice(0, visibleShoppingCount).length === 0 && (
                     <div className="empty card list-empty">
@@ -1574,19 +1550,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                 })}
               </div>
               {visiblePurchaseCount < filteredPurchases.length && <button className="secondary load-more" onClick={() => setVisiblePurchaseCount(count => count + 50)}>Load 50 more</button>}
-              <div className="direct-add">
-                <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'purchase' ? null : 'purchase')} aria-expanded={expandedAdd === 'purchase'} aria-label="Add a purchase">
-                  <span>Add a purchase</span><Plus size={17} /></button>
-                {expandedAdd === 'purchase' && (
-                  <div className="direct-add-fields">
-                    <input className="grow" value={directPurchaseName} onChange={e => setDirectPurchaseName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Item" aria-label="Purchase item" autoFocus />
-                    <input className="num" type="number" min="0" step="any" value={directPurchaseQty} onChange={e => setDirectPurchaseQty(e.target.value)} placeholder="Qty" aria-label="Quantity" />
-                    <input className="unit" value={directPurchaseUnit} onChange={e => setDirectPurchaseUnit(e.target.value)} placeholder="Unit" aria-label="Unit" />
-                    <input className="num price" type="number" min="0" step="0.01" value={directPurchasePrice} onChange={e => setDirectPurchasePrice(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addPurchaseDirect() }} placeholder="Price" aria-label="Price" />
-                    <button className="direct-add-btn" onClick={() => void addPurchaseDirect()} disabled={!directPurchaseName.trim()} aria-label="Save purchase"><Check size={17} /></button>
-                  </div>
-                )}
-              </div>
+
             </>
           )}
         </section>
@@ -1613,7 +1577,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
             </div>
             <div className="summary-card card">
               <span>Purchases</span>
-              <strong>{livePurchases.length}</strong>
+              <strong>{money(purchaseTotal)}</strong>
               <small>recorded</small>
               {displayThemeStickers[3] && <img className="summary-card-sticker" src={stickerUrl(theme, displayThemeStickers[3])} alt="" aria-hidden="true" />}
             </div>
