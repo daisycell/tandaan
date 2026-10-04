@@ -1,6 +1,7 @@
 import { ArrowLeft, Bell, Check, HandCoins, Plus, Search, Trash2, X } from 'lucide-react'
 import type { Debt, DebtDirection } from '../types'
 import { debtStatus, formatDebtMoney, paidPercent, remainingCents, sortDebtPayments, totalPaidCents } from '../debt'
+import SwipeToDelete from '../SwipeToDelete'
 
 type Props = {
   debts: Debt[]
@@ -123,20 +124,23 @@ export default function DebtView(p: Props) {
 
     </div>
     <div className="debt-summary-strip"><div><span>I owe</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owe').reduce((s,d)=>s+remainingCents(d),0))}</strong></div><div><span>Owed to me</span><strong>{formatDebtMoney(p.allDebts.filter(d=>d.direction==='owed_to_me').reduce((s,d)=>s+remainingCents(d),0))}</strong></div></div>
-    {p.addOpen && <div className="debt-form">
-      <div className="filter-tabs"><button className={p.direction==='owe'?'filter-tab active':'filter-tab'} onClick={()=>p.setDirection('owe')}>I owe</button><button className={p.direction==='owed_to_me'?'filter-tab active':'filter-tab'} onClick={()=>p.setDirection('owed_to_me')}>Owed to me</button></div>
-      <input value={p.person} onChange={e=>p.setPerson(e.target.value)} placeholder="Person name"/>
-      <input inputMode="decimal" value={p.amount} onChange={e=>p.setAmount(e.target.value)} placeholder="Amount (₱)"/>
-      <input value={p.description} onChange={e=>p.setDescription(e.target.value)} placeholder="What is it for? (optional)"/>
-      <div className="two-col"><input type="date" value={p.dueDate} onChange={e=>p.setDueDate(e.target.value)}/><label className="debt-check"><input type="checkbox" checked={p.reminder} onChange={e=>p.setReminder(e.target.checked)}/> Reminder</label></div>
-      <div className="modal-actions"><button className="secondary" onClick={()=>p.setAddOpen(false)}>Cancel</button><button className="primary" onClick={p.onAdd}>Save debt</button></div>
-    </div>}
     <div className="debt-toolbar"><div className="debt-search"><Search size={15}/><input value={p.search} onChange={e=>p.setSearch(e.target.value)} placeholder="Search debts"/></div><div className="filter-tabs debt-filters">
       {(['all','owe','owed_to_me','overdue','paid'] as const).map(f=><button key={f} className={p.filter===f?'filter-tab active':'filter-tab'} onClick={()=>p.setFilter(f)}>{f==='all'?'All':f==='owe'?'I owe':f==='owed_to_me'?'Owed to me':f[0].toUpperCase()+f.slice(1)}</button>)}
     </div></div>
     <div className="debt-list">
       {p.debts.length===0 && <div className="empty"><HandCoins size={24}/><strong>No debts yet.</strong><span>Add your first debt above.</span></div>}
-      {p.debts.map(d=>{const rem=remainingCents(d);const pct=paidPercent(d);const st=debtStatus(d,new Date().toISOString().slice(0,10));return <div className="swipe-row debt-swipe-row" key={d.id} onTouchStart={e=>{const x=e.touches[0]?.clientX ?? 0;(e.currentTarget as HTMLElement).dataset.swipeStart=String(x)}} onTouchEnd={e=>{const start=Number((e.currentTarget as HTMLElement).dataset.swipeStart ?? 0);const end=e.changedTouches[0]?.clientX ?? start;if(start-end>80){p.onDeleteById(d.id)}}}><button className="debt-list-card" onClick={()=>p.onOpen(d.id)}><div className="debt-list-main"><strong>{d.personName}</strong><span>{d.direction==='owe'?'I owe':'Owed to me'} · {statusLabel(st)}</span></div><div className="debt-list-amount"><strong>{formatDebtMoney(rem)}</strong><small>{pct}% paid</small></div><div className="debt-progress"><span style={{width:`${pct}%`}}/></div>{d.dueDate&&<small className={st==='overdue'?'debt-overdue':''}>Due {new Date(`${d.dueDate}T00:00:00`).toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</small>}</button></div>})}
-    </div>
+      {p.debts.map(d => {
+        const rem = remainingCents(d)
+        const pct = paidPercent(d)
+        const st = debtStatus(d, new Date().toISOString().slice(0, 10))
+        return <SwipeToDelete key={d.id} confirmDelete onDelete={() => p.onDeleteById(d.id)}>
+          <button className="debt-list-card list-item-card" onClick={() => p.onOpen(d.id)}>
+            <div className="debt-list-main"><strong>{d.personName}</strong><span>{d.direction === 'owe' ? 'I owe' : 'Owed to me'} · {statusLabel(st)}</span></div>
+            <div className="debt-list-amount"><strong>{formatDebtMoney(rem)}</strong><small>{pct}% paid</small></div>
+            <div className="debt-progress"><span style={{ width: `${pct}%` }} /></div>
+            {d.dueDate && <small className={st === 'overdue' ? 'debt-overdue' : ''}>Due {new Date(`${d.dueDate}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}</small>}
+          </button>
+        </SwipeToDelete>
+      })}    </div>
   </section>
 }

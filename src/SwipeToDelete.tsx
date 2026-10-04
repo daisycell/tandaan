@@ -5,12 +5,14 @@ type Props = {
   children: ReactNode
   onDelete: () => void
   showHint?: boolean
+  confirmDelete?: boolean
 }
 
-export default function SwipeToDelete({ children, onDelete, showHint = false }: Props) {
+export default function SwipeToDelete({ children, onDelete, showHint = false, confirmDelete = false }: Props) {
   const [offset, setOffset] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [armed, setArmed] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const startRef = useRef({ x: 0, y: 0, active: false })
   const offsetRef = useRef(0)
   const widthRef = useRef(320)
@@ -21,6 +23,7 @@ export default function SwipeToDelete({ children, onDelete, showHint = false }: 
     widthRef.current = event.currentTarget.clientWidth || 320
     startRef.current = { x: event.clientX, y: event.clientY, active: true }
     offsetRef.current = offset
+    setConfirming(false)
     setDragging(true)
     event.currentTarget.setPointerCapture(event.pointerId)
   }
@@ -36,6 +39,7 @@ export default function SwipeToDelete({ children, onDelete, showHint = false }: 
     const threshold = widthRef.current * 0.72
     setOffset(next)
     setArmed(next <= -threshold)
+    setConfirming(false)
   }
 
   const finish = () => {
@@ -44,6 +48,11 @@ export default function SwipeToDelete({ children, onDelete, showHint = false }: 
     const threshold = widthRef.current * 0.72
     if (offset <= -threshold) {
       setArmed(false)
+      if (confirmDelete) {
+        setConfirming(true)
+        setOffset(-Math.min(150, Math.max(118, widthRef.current * 0.38)))
+        return
+      }
       setOffset(-widthRef.current)
       window.setTimeout(onDelete, 110)
       return
@@ -52,21 +61,35 @@ export default function SwipeToDelete({ children, onDelete, showHint = false }: 
     setOffset(offset < -56 ? -110 : 0)
   }
 
+  const confirm = () => {
+    setConfirming(false)
+    setOffset(-widthRef.current)
+    window.setTimeout(onDelete, 110)
+  }
+
   const handlePointerCancel = () => {
     startRef.current.active = false
     setDragging(false)
     setArmed(false)
+    setConfirming(false)
     setOffset(0)
   }
 
   return (
     <div className="swipe-shell" aria-label="Swipe left to delete">
       <div className={armed ? 'swipe-delete-bg armed' : 'swipe-delete-bg'}>
-        <div className="swipe-delete-hint">
-          <Trash2 size={19} />
-          {showHint && <span>{armed ? 'Release to delete' : 'Swipe left to delete'}</span>}
-          {!showHint && armed && <span>Release to delete</span>}
-        </div>
+        {confirmDelete && confirming ? (
+          <button type="button" className="swipe-delete-confirm" onClick={confirm}>
+            <Trash2 size={17} />
+            <span>Delete</span>
+          </button>
+        ) : (
+          <div className="swipe-delete-hint">
+            <Trash2 size={19} />
+            {showHint && <span>{armed ? 'Release to delete' : 'Swipe left to delete'}</span>}
+            {!showHint && armed && <span>Release to delete</span>}
+          </div>
+        )}
       </div>
       <div
         className={dragging ? 'swipe-content dragging' : 'swipe-content'}

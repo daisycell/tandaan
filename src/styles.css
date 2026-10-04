@@ -229,6 +229,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .section-heading h2 { margin:0; font-size:20px; letter-spacing:-.03em; }
 .section-heading span { color:var(--muted-2); font-size:12px; }
 .task-list { display:grid; gap:10px; }
+.list-item-card { position:relative; border:1px solid var(--border); border-radius:15px; background:var(--surface-2); color:var(--text); }
+.list-item-card:hover { border-color:var(--border-strong); }
 .task-card { padding:15px; display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:flex-start; min-height:76px; }
 .check-btn { background:none; border:0; color:var(--accent); padding:2px; }
 .check-btn svg { stroke-width:2.2; }
@@ -338,6 +340,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .swipe-delete-bg { position:absolute; inset:0; display:flex; align-items:center; justify-content:flex-end; padding-right:22px; background:linear-gradient(90deg, rgba(107,33,49,.45), var(--danger-bg)); color:#fff; }
 .swipe-delete-bg.armed { background:linear-gradient(90deg, rgba(136,31,54,.45), #991b3f); }
 .swipe-delete-hint { display:flex; align-items:center; gap:8px; font-size:11px; font-weight:850; text-align:center; }
+.swipe-delete-confirm { display:flex; align-items:center; gap:7px; min-height:42px; padding:0 14px; border:1px solid rgba(255,255,255,.2); border-radius:12px; background:rgba(0,0,0,.2); color:#fff; font:inherit; font-size:12px; font-weight:850; cursor:pointer; }
 .swipe-content { position:relative; z-index:1; touch-action:pan-y; transition:transform .18s ease; }
 .swipe-content.dragging { transition:none; cursor:grabbing; }
 .swipe-content .task-card { border-radius:20px; }
@@ -1111,7 +1114,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .section-heading > span { color:var(--muted); font-size:11px; font-weight:750; }
 .section-see-all { display:inline-flex; margin-top:8px; }
 .debt-home-section .task-list { display:grid; gap:8px; }
-.debt-home-card { width:100%; border:0; text-align:left; cursor:pointer; }
+.debt-home-card { width:100%; border:0; text-align:left; cursor:pointer; color:var(--text); }
 .debt-home-card .task-main { width:100%; }
 .debt-home-card .debt-progress { margin-top:7px; }
 
