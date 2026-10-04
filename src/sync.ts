@@ -218,7 +218,7 @@ async function flushOutbox(userId: string) {
           flagged: next.flagged,
           nextRetryAt: next.nextRetryAt,
           lastError: error instanceof Error ? error.message : String(error),
-        })
+        } as any)
       }
       // Transient and offline failures leave retryCount untouched; the next
       // flush retries them for free.
@@ -255,7 +255,7 @@ export async function retryOutboxItem(id: number) {
         flagged: next.flagged,
         nextRetryAt: next.nextRetryAt,
         lastError: error instanceof Error ? error.message : String(error),
-      })
+      } as any)
     }
   }
 }
