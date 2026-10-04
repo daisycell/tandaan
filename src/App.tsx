@@ -1687,7 +1687,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           />
 
           <section className="section-block">
-            <div className="section-heading"><h2>Purchases</h2><span>{money(purchaseTotal)}{pricedPurchaseCount < purchases.length ? ' · some prices missing' : ''}</span></div>
+            <div className="section-heading"><h2>Purchases</h2></div>
             <div className="purchase-total card">
               <div><span>Total spent</span><strong>{money(purchaseTotal)}</strong></div>
               <small>{purchases.length} item{purchases.length === 1 ? '' : 's'} · {pricedPurchaseCount} priced</small>
