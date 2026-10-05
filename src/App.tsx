@@ -263,7 +263,7 @@ export default function App() {
   const [purchases, setPurchases] = useState<Purchase[]>([])
   const [debts, setDebts] = useState<Debt[]>([])
   const [listPage, setListPage] = useState<'home' | 'tasks' | 'shopping' | 'purchases'>('home')
-  const [taskFilter, setTaskFilter] = useState<'today' | 'upcoming' | 'overdue' | 'done'>('today')
+  const [taskFilter, setTaskFilter] = useState<'all' | 'upcoming' | 'overdue' | 'done'>('all')
   const [shoppingFilter, setShoppingFilter] = useState<'to_buy' | 'bought'>('to_buy')
   const [purchaseRange, setPurchaseRange] = useState<'today' | 'this_week' | 'last_week' | 'this_month' | 'custom'>('today')
   const [purchaseSearch, setPurchaseSearch] = useState('')
@@ -588,7 +588,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
         if (task.isCompleted) return false
         if (taskFilter === 'upcoming') return Boolean(task.dueDate && task.dueDate > today)
         if (taskFilter === 'overdue') return Boolean(task.dueDate && task.dueDate < today)
-        return !task.dueDate || task.dueDate === today
+        return true
       })
       .sort((a, b) => {
         const aDate = a.dueDate ?? '9999-12-31'
@@ -1393,7 +1393,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               </div>
               <div className="filter-tabs" role="tablist" aria-label="Task filters">
                 {([
-                  ['today', 'Today'],
+                  ['all', 'All'],
                   ['upcoming', 'Upcoming'],
                   ['overdue', 'Overdue'],
                   ['done', 'Done'],
@@ -1406,7 +1406,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                   {filteredTasks.slice(0, visibleTaskCount).length === 0 && (
                     <div className="empty card list-empty">
                       <Check size={22} />
-                      <span>{taskFilter === 'done' ? 'No completed tasks.' : taskFilter === 'upcoming' ? 'No upcoming tasks.' : taskFilter === 'overdue' ? 'No overdue tasks.' : 'No tasks for today.'}</span>
+                      <span>{taskFilter === 'done' ? 'No completed tasks.' : taskFilter === 'upcoming' ? 'No upcoming tasks.' : taskFilter === 'overdue' ? 'No overdue tasks.' : 'No tasks yet.'}</span>
                     </div>
                   )}
                   {groupByDate(filteredTasks.slice(0, visibleTaskCount), taskDateKey).map(group => (
