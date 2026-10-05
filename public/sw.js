@@ -38,6 +38,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
   if (url.pathname.startsWith('/api/')) return
+  // Never let an installed worker cache its own update script.
+  if (url.pathname === '/sw.js') return
 
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
