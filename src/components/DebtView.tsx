@@ -63,9 +63,11 @@ export function DebtHomeCard(p: DebtHomeCardProps) {
       <div className="task-main">
         <div className={p.completed ? 'task-title completed' : 'task-title'}>{p.title}</div>
         {p.secondary && <div className="detail-line">{p.secondary}</div>}
-        <div className="debt-progress" aria-hidden="true">
-          {p.progress != null && <span style={{ width: `${Math.max(0, Math.min(100, p.progress))}%` }} />}
-        </div>
+        {p.progress != null && (
+          <div className="debt-progress" aria-hidden="true">
+            <span style={{ width: `${Math.max(0, Math.min(100, p.progress))}%` }} />
+          </div>
+        )}
       </div>
       {p.actions && <div className="task-actions">{p.actions}</div>}
     </>
