@@ -1,4 +1,5 @@
 import { ArrowLeft, Bell, Check, HandCoins, Plus, Search, Trash2, X } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { Debt, DebtDirection } from '../types'
 import { debtStatus, formatDebtMoney, paidPercent, remainingCents, sortDebtPayments, totalPaidCents } from '../debt'
 import SwipeToDelete from '../SwipeToDelete'
@@ -45,6 +46,43 @@ function statusLabel(status: ReturnType<typeof debtStatus>) {
   return status === 'paid' ? 'Paid' : status === 'overdue' ? 'Overdue' : status === 'partially_paid' ? 'Partially paid' : 'Active'
 }
 
+export type DebtHomeCardProps = {
+  title: string
+  secondary?: ReactNode
+  leading?: ReactNode
+  actions?: ReactNode
+  completed?: boolean
+  progress?: number | null
+  onClick?: () => void
+}
+
+export function DebtHomeCard(p: DebtHomeCardProps) {
+  const content = (
+    <>
+      {p.leading}
+      <div className="task-main">
+        <div className={p.completed ? 'task-title completed' : 'task-title'}>{p.title}</div>
+        {p.secondary && <div className="detail-line">{p.secondary}</div>}
+        <div className="debt-progress" aria-hidden="true">
+          {p.progress != null && <span style={{ width: `${Math.max(0, Math.min(100, p.progress))}%` }} />}
+        </div>
+      </div>
+      {p.actions && <div className="task-actions">{p.actions}</div>}
+    </>
+  )
+
+  if (p.onClick) {
+    return (
+      <button type="button" className="task-card card debt-home-card" onClick={p.onClick}>
+        {content}
+      </button>
+    )
+  }
+
+  return <div className="task-card card debt-home-card">{content}</div>
+}
+
+
 export default function DebtView(p: Props) {
   if (p.homeMode) {
     const activeDebts = p.allDebts.filter(d => remainingCents(d) > 0)
@@ -71,9 +109,13 @@ export default function DebtView(p: Props) {
         {preview.length === 0 ? <div className="empty card list-empty"><HandCoins size={22}/><span>No active debts.</span></div> : preview.map(d => {
           const remaining = remainingCents(d)
           const pct = paidPercent(d)
-          return <button key={d.id} className="task-card card debt-home-card" onClick={()=>p.onOpen(d.id)}>
-            <div className="task-main"><div className="task-title">{d.personName}</div><div className="detail-line"><span>{d.direction==='owe'?'I owe':'Owed to me'}</span><span>{formatDebtMoney(remaining)}</span></div><div className="debt-progress"><span style={{width:`${pct}%`}} /></div></div>
-          </button>
+          return <DebtHomeCard
+            key={d.id}
+            title={d.personName}
+            secondary={<><span>{d.direction==='owe'?'I owe':'Owed to me'}</span><span>{formatDebtMoney(remaining)}</span></>}
+            progress={pct}
+            onClick={() => p.onOpen(d.id)}
+          />
         })}
       </div>
       {activeDebts.length > 3 && p.onSeeAll && <button className="summary-see-all section-see-all" onClick={p.onSeeAll}>See all</button>}
