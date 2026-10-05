@@ -571,13 +571,17 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
   const debtRemainingOwed = useMemo(() => liveDebts.filter(d => d.direction === 'owed_to_me').reduce((s,d)=>s+remainingCents(d),0), [liveDebts])
   const selectedDebt = selectedDebtId ? liveDebts.find(d => d.id === selectedDebtId) ?? null : null
   const today = todayISO()
-  const todayTasks = useMemo(
+  const homeTasks = useMemo(
     () => liveTasks
-      .filter(t => !t.isCompleted && (!t.dueDate || t.dueDate === today))
-      .sort((a, b) => (a.dueTime ?? '99:99').localeCompare(b.dueTime ?? '99:99') || b.createdAt.localeCompare(a.createdAt)),
-    [liveTasks, today]
+      .filter(t => !t.isCompleted)
+      .sort((a, b) => {
+        const aDate = a.dueDate ?? '9999-12-31'
+        const bDate = b.dueDate ?? '9999-12-31'
+        return aDate.localeCompare(bDate) || (a.dueTime ?? '99:99').localeCompare(b.dueTime ?? '99:99') || b.createdAt.localeCompare(a.createdAt)
+      }),
+    [liveTasks]
   )
-  const todayCount = todayTasks.length
+  const homeTaskCount = homeTasks.length
   const purchaseTotal = livePurchases.reduce((sum, purchase) => sum + (purchase.price ?? 0), 0)
   const pricedPurchaseCount = livePurchases.filter(p => p.price != null).length
 
@@ -671,7 +675,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
     }
   }, [listPage, swipeHintSeen])
 
-  const taskPreview = todayTasks.slice(0, 3)
+  const taskPreview = homeTasks.slice(0, 3)
   const shoppingPreview = liveShopping
     .filter(item => !item.isPurchased)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -1555,7 +1559,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           <section className="summary-grid home-stat-grid" aria-label="Home summaries">
             <div className="summary-card card">
               <span>Today</span>
-              <strong>{todayCount}</strong>
+              <strong>{homeTaskCount}</strong>
               <small>open tasks</small>
               {displayThemeStickers[0] && <img className="summary-card-sticker sticker-a" src={stickerUrl(theme, displayThemeStickers[0])} alt="" aria-hidden="true" />}
             </div>
@@ -1580,7 +1584,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
           </section>
 
           <section className="section-block">
-            <div className="section-heading"><h2>Today</h2><span>{todayCount} open</span></div>
+            <div className="section-heading"><h2>Open Tasks</h2><span>{homeTaskCount} open</span></div>
             <div className="direct-add">
               <button type="button" className="direct-add-row" onClick={() => setExpandedAdd(expandedAdd === 'task' ? null : 'task')} aria-expanded={expandedAdd === 'task'} aria-label="Add a task">
                 <span>Add a task</span><Plus size={17} />
@@ -1593,8 +1597,8 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               )}
             </div>
             <div className="task-list">
-              {todayTasks.length === 0 && <div className="empty card list-empty"><Check size={22} /><span>You are all caught up.</span></div>}
-              {todayTasks.slice(0, 3).map(task => (
+              {homeTasks.length === 0 && <div className="empty card list-empty"><Check size={22} /><span>You are all caught up.</span></div>}
+              {homeTasks.slice(0, 3).map(task => (
                 <SwipeToDelete key={task.id} onDelete={() => void deleteTask(task)}>
                   <DebtHomeCard
                   title={task.title}
@@ -1606,7 +1610,7 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               </SwipeToDelete>
               ))}
             </div>
-            {todayTasks.length > 3 && <button className="summary-see-all section-see-all" onClick={() => openListPage('tasks')}>See all</button>}
+            {homeTasks.length > 3 && <button className="summary-see-all section-see-all" onClick={() => openListPage('tasks')}>See all</button>}
           </section>
 
           <section className="section-block">
