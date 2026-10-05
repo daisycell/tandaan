@@ -1075,11 +1075,12 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-so
 .purchase-date-heading strong { font-size:12px; }
 .purchase-date-heading span { color:var(--muted-2); font-size:10px; text-align:right; }
 @media (max-width:620px) {
-  .subpage-header { flex-direction:column; }
+  .subpage-header { flex-direction:row; }
   .back-btn { width:100%; justify-content:center; min-height:44px; }
   .filter-tabs { gap:6px; }
   .filter-tab { padding:8px 10px; font-size:10.5px; }
   .purchase-toolbar { padding:12px; }
+  .purchase-toolbar + .purchase-total { margin-top:12px; }
   .purchase-range-tabs { margin:0 -4px; padding-left:4px; padding-right:4px; }
   .purchase-date-heading { align-items:flex-start; flex-direction:column; gap:3px; }
   .purchase-date-heading span { text-align:left; }
