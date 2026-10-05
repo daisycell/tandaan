@@ -57,8 +57,8 @@ export type DebtHomeCardProps = {
 }
 
 export function DebtHomeCard(p: DebtHomeCardProps) {
-  const card = (
-    <div className="task-card card debt-home-card">
+  const content = (
+    <>
       {p.leading}
       <div className="task-main">
         <div className={p.completed ? 'task-title completed' : 'task-title'}>{p.title}</div>
@@ -68,22 +68,20 @@ export function DebtHomeCard(p: DebtHomeCardProps) {
         </div>
       </div>
       {p.actions && <div className="task-actions">{p.actions}</div>}
-    </div>
+    </>
   )
 
-  return p.onClick ? (
-    <button type="button" className="task-card card debt-home-card" onClick={p.onClick}>
-      {p.leading}
-      <div className="task-main">
-        <div className={p.completed ? 'task-title completed' : 'task-title'}>{p.title}</div>
-        {p.secondary && <div className="detail-line">{p.secondary}</div>}
-        <div className="debt-progress" aria-hidden="true">
-          {p.progress != null && <span style={{ width: `${Math.max(0, Math.min(100, p.progress))}%` }} />}
-        </div>
-      </div>
-    </button>
-  ) : card
+  if (p.onClick) {
+    return (
+      <button type="button" className="task-card card debt-home-card" onClick={p.onClick}>
+        {content}
+      </button>
+    )
+  }
+
+  return <div className="task-card card debt-home-card">{content}</div>
 }
+
 
 export default function DebtView(p: Props) {
   if (p.homeMode) {
