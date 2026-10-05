@@ -12,7 +12,7 @@ import { TandaanLogo } from './components/TandaanLogo'
 import type { Debt, DebtPayment, Purchase, ShoppingItem, Task, ThemeColorId, ThemeId } from './types'
 import { COLOR_OPTIONS, DEFAULT_THEME, DEFAULT_THEME_COLOR, STICKERS, THEME_OPTIONS, colorOption, colorSwatch, isThemeId, isThemeColorId, stickerUrl, themeOption } from './theme'
 import SwipeToDelete from './SwipeToDelete'
-import DebtView from './components/DebtView'
+import DebtView, { DebtHomeCard } from './components/DebtView'
 import { debtStatus, formatDebtMoney, makeDebtPayment, paidPercent, parseAmountToCents, remainingCents, sortDebtPayments, totalPaidCents } from './debt'
 
 function newId() {
@@ -1415,17 +1415,13 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                       <div className="full-list">
                         {group.items.map((task, index) => (
                           <SwipeToDelete key={task.id} showHint={!swipeHintSeen.tasks && group.items[0]?.id === filteredTasks[0]?.id && index === 0} onDelete={() => void deleteTask(task)}>
-                            <div className="task-card card list-item-card">
-                              <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
-                              <div className="task-main">
-                                <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
-                                {task.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</div>}
-                              </div>
-                              <div className="task-actions">
-                                {!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}
-                                <button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button>
-                              </div>
-                            </div>
+                            <DebtHomeCard
+                              title={task.title}
+                              completed={task.isCompleted}
+                              secondary={task.dueDate ? <><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</> : undefined}
+                              leading={<button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>}
+                              actions={<>{!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}<button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button></>}
+                            />
                           </SwipeToDelete>
                         ))}
                       </div>
@@ -1467,14 +1463,13 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                       <div className="full-list">
                         {group.items.map((item, index) => (
                           <SwipeToDelete key={item.id} showHint={!swipeHintSeen.shopping && group.items[0]?.id === filteredShopping[0]?.id && index === 0} onDelete={() => void deleteShopping(item)}>
-                            <div className="task-card card list-item-card">
-                              <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
-                              <div className="task-main">
-                                <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
-                                {(item.quantity != null || item.unit || item.expectedPrice != null) && <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</div>}
-                              </div>
-                              <div className="task-actions"><button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button></div>
-                            </div>
+                            <DebtHomeCard
+                              title={item.name}
+                              completed={item.isPurchased}
+                              secondary={(item.quantity != null || item.unit || item.expectedPrice != null) ? <>{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</> : undefined}
+                              leading={<button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>}
+                              actions={<button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button>}
+                            />
                           </SwipeToDelete>
                         ))}
                       </div>
@@ -1537,11 +1532,12 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
                       <div className="full-list">
                         {group.items.map((item, index) => (
                           <SwipeToDelete key={item.id} showHint={!swipeHintSeen.purchases && group.items[0]?.id === filteredPurchases[0]?.id && index === 0} onDelete={() => void deletePurchase(item)}>
-                            <div className="task-card card list-item-card">
-                              <div className="purchase-dot">₱</div>
-                              <div className="task-main"><div className="task-title">{item.itemName}</div><div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div></div>
-                              <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button></div>
-                            </div>
+                            <DebtHomeCard
+                              title={item.itemName}
+                              secondary={<>{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</>}
+                              leading={<div className="purchase-dot">₱</div>}
+                              actions={<button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button>}
+                            />
                           </SwipeToDelete>
                         ))}
                       </div>
@@ -1600,18 +1596,14 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               {todayTasks.length === 0 && <div className="empty card list-empty"><Check size={22} /><span>You are all caught up.</span></div>}
               {todayTasks.slice(0, 3).map(task => (
                 <SwipeToDelete key={task.id} onDelete={() => void deleteTask(task)}>
-                  <div className="task-card card list-item-card">
-                    <button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>
-                    <div className="task-main">
-                      <div className={task.isCompleted ? 'task-title completed' : 'task-title'}>{task.title}</div>
-                      {task.dueDate && <div className="due-line"><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</div>}
-                    </div>
-                    <div className="task-actions">
-                      {!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}
-                      <button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button>
-                    </div>
-                  </div>
-                </SwipeToDelete>
+                  <DebtHomeCard
+                  title={task.title}
+                  completed={task.isCompleted}
+                  secondary={task.dueDate ? <><Clock3 size={15} /> {formatDue(task.dueDate, task.dueTime)}</> : undefined}
+                  leading={<button className="check-btn" onClick={() => void toggleTask(task)} aria-label={task.isCompleted ? 'Mark incomplete' : 'Complete task'}>{task.isCompleted ? <Check /> : <Circle />}</button>}
+                  actions={<>{!task.dueDate && <button className="icon-btn" onClick={() => startEditTask(task)} title="Set due date"><CalendarPlus size={17} /></button>}<button className="icon-btn" onClick={() => startEditTask(task)} title="Edit"><Pencil size={17} /></button></>}
+                />
+              </SwipeToDelete>
               ))}
             </div>
             {todayTasks.length > 3 && <button className="summary-see-all section-see-all" onClick={() => openListPage('tasks')}>See all</button>}
@@ -1635,15 +1627,14 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               {liveShopping.length === 0 && <div className="empty card list-empty"><ShoppingCart size={22} /><span>No shopping items yet.</span></div>}
               {liveShopping.slice(0, 3).map(item => (
                 <SwipeToDelete key={item.id} onDelete={() => void deleteShopping(item)}>
-                  <div className="task-card card list-item-card">
-                    <button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>
-                    <div className="task-main">
-                      <div className={item.isPurchased ? 'task-title completed' : 'task-title'}>{item.name}</div>
-                      {(item.quantity != null || item.unit || item.expectedPrice != null) && <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</div>}
-                    </div>
-                    <div className="task-actions"><button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button></div>
-                  </div>
-                </SwipeToDelete>
+                  <DebtHomeCard
+                  title={item.name}
+                  completed={item.isPurchased}
+                  secondary={(item.quantity != null || item.unit || item.expectedPrice != null) ? <>{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.expectedPrice != null && <span>{money(item.expectedPrice)}</span>}{item.isPurchased && <span className="bought-pill">bought</span>}</> : undefined}
+                  leading={<button className="check-btn" onClick={() => void toggleShopping(item)} aria-label={item.isPurchased ? 'Mark not bought' : 'Mark bought'}>{item.isPurchased ? <Check /> : <Circle />}</button>}
+                  actions={<button className="icon-btn" onClick={() => startEditShopping(item)} title="Edit shopping item"><Pencil size={17} /></button>}
+                />
+              </SwipeToDelete>
               ))}
             </div>
             {liveShopping.length > 3 && <button className="summary-see-all section-see-all" onClick={() => openListPage('shopping')}>See all</button>}
@@ -1709,15 +1700,13 @@ const [remindersEnabled, setRemindersEnabled] = useState(false)
               {livePurchases.length === 0 && <div className="empty card list-empty"><Receipt size={22} /><span>No purchases yet.</span></div>}
               {livePurchases.slice(0, 3).map(item => (
                 <SwipeToDelete key={item.id} onDelete={() => void deletePurchase(item)}>
-                  <div className="task-card card list-item-card">
-                    <div className="purchase-dot">₱</div>
-                    <div className="task-main">
-                      <div className="task-title">{item.itemName}</div>
-                      <div className="detail-line">{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</div>
-                    </div>
-                    <div className="task-actions"><button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button></div>
-                  </div>
-                </SwipeToDelete>
+                  <DebtHomeCard
+                  title={item.itemName}
+                  secondary={<>{item.quantity != null && <span>{item.quantity} {shortUnit(item.unit)}</span>}{item.price != null ? <span>{money(item.price)}</span> : <span className="muted-pill">price not entered</span>}</>}
+                  leading={<div className="purchase-dot">₱</div>}
+                  actions={<button className="icon-btn" onClick={() => startEditPurchase(item)} title="Edit purchase"><Pencil size={17} /></button>}
+                />
+              </SwipeToDelete>
               ))}
             </div>
             {livePurchases.length > 3 && <button className="summary-see-all section-see-all" onClick={() => openListPage('purchases')}>See all</button>}
