@@ -33,7 +33,7 @@ create table if not exists public.tasks (
   deleted_at timestamptz null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint tasks_reminder_minutes_positive check (reminder_minutes_before > 0)
+  constraint tasks_reminder_minutes_positive check (reminder_minutes_before >= 0)
 );
 
 create table if not exists public.shopping_items (
